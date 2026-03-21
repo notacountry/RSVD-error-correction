@@ -12,6 +12,7 @@ import warnings
 
 import numpy as np
 import numpy.polynomial.polynomial as nppoly
+from scipy.linalg import eig as scipy_eig
 
 
 def stieltjes_transform(z, eigenvalues):
@@ -57,19 +58,69 @@ def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
     if len(w_vals) == 0:
         return np.array([], dtype=complex)
 
-    mean_ev = np.mean(eigenvalues)
-    z = mean_ev / w_vals
+    m = len(eigenvalues)
+
+    # Separate nonzero and zero eigenvalues.
+    # Zero eigenvalues contribute a 1/z pole to G(z), making ψ′(z) → 0 at
+    # z = 0.  Near the left ψ-domain boundary w → −n_nz/m, the correct
+    # solution z_★ → 0⁻ and Newton's convergence degenerates (step → ∞).
+    #
+    # Mathematical fix: use the identity
+    #   ψ_Y(z) = (n_nz/m) · ψ_nz(z)
+    # where ψ_nz is the ψ-function of the NONZERO probability sub-measure
+    # (n_nz eigenvalues, normalised to sum to 1).  Solving ψ_Y(z) = w is
+    # then equivalent to ψ_nz(z) = α·w where α = m/n_nz.  With no 1/z
+    # contribution, ψ_nz′ is bounded away from zero and Newton is
+    # well-conditioned throughout w ∈ (−1, 0).
+    ev_max = eigenvalues.max()
+    nz_mask = eigenvalues > (ev_max * 1e-8 if ev_max > 0 else 0.0)
+    eigs_nz = eigenvalues[nz_mask]
+    n_nz = len(eigs_nz)
+
+    if n_nz == 0:
+        return np.full_like(w_vals, np.nan)
+
+    alpha   = m / n_nz            # rescaling factor: w′ = α·w ∈ (−1, 0)
+    w_prime = alpha * w_vals      # domain of the nonzero probability measure
+
+    # Initial guess: z = mean_nz / w′ is always negative for w′ < 0.
+    mean_nz = eigs_nz.mean()
+    z = mean_nz / w_prime
+
+    # Newton on ψ_nz(z) − w′ = 0 in the t = log(−z) parametrisation.
+    #
+    # Standard Newton in z-space has f(z) = ψ_nz(z) − w′ and
+    # f′(z) = ψ_nz′(z) which is tiny when |z| >> max(λᵢ), causing the
+    # step f/f′ to overshoot past z = 0 on the first iteration.
+    #
+    # In t-space (z = −exp(t)):
+    #   f_t′ = z · ψ_nz′(z) = z · (Gz + z·dGz)
+    #        = z · dfz   (always positive since z < 0 and dfz < 0)
+    # This is O(1) rather than O(1/z²), so Newton is well-conditioned
+    # throughout the domain and can never cross z = 0.
+    # Work in real arithmetic: z < 0 always, so t = log(−z) is real.
+    # Complex drift would let t.real grow unboundedly → exp overflow.
+    t = np.log(-z.real)   # real array: t = log(−z), so z = −exp(t)
 
     for _ in range(max_iter):
-        Gz   = stieltjes_transform(z, eigenvalues)
-        d    = 1.0 / (z[..., None] - eigenvalues)
-        dGz  = -np.mean(d**2, axis=-1)
-        fz   = z * Gz - 1.0 - w_vals
-        dfz  = Gz + z * dGz
-        step = np.where(np.abs(dfz) > 1e-14, fz / dfz, 0.0 + 0j)
-        z   -= step
+        z    = -np.exp(t)
+        Gz   = stieltjes_transform(z, eigs_nz).real
+        d    = 1.0 / (z[..., None] - eigs_nz)
+        dGz  = -np.mean(d**2, axis=-1).real
+        fz   = (z * Gz - 1.0 - w_prime.real)
+        dfz  = Gz + z * dGz           # ψ_nz′(z) < 0
+        # t-space derivative: f_t′ = z · dfz  (> 0 since z < 0 and dfz < 0)
+        dft  = z * dfz
+        safe = np.abs(dft) > 1e-14
+        step = np.where(safe, fz / np.where(safe, dft, 1.0), 0.0)
+        # Clamp step to at most 3 in log-space (|z| changes by ≤ e^3 ≈ 20x per
+        # iteration) and keep t bounded to prevent exp overflow.
+        t   -= np.clip(step, -3.0, 3.0)
+        t    = np.clip(t, -600.0, 600.0)
         if not (np.abs(step) >= tol).any():
             break
+
+    z = -np.exp(t)
 
     return (1.0 + w_vals) / w_vals * z
 
@@ -157,7 +208,8 @@ def _aaa(z_vals, G_vals, tol=1e-13, mmax=100):
         fj_list.append(F[j_star])
         mask[j_star] = False
 
-        C_cols.append(1.0 / (z - zj_list[-1]))
+        with np.errstate(divide="ignore"):
+            C_cols.append(1.0 / (z - zj_list[-1]))
         C = np.column_stack(C_cols)
 
         fj = np.array(fj_list)
@@ -184,12 +236,22 @@ def _aaa_poles_residues(zj, fj, wj):
     """
     Extract poles and residues from an AAA barycentric approximant.
 
-    Poles are roots of the denominator polynomial
-        p(z) = sum_k w_k * prod_{j != k} (z - z_j),
-    computed via polynomial arithmetic and nppoly.polyroots.
+    Poles are found via the companion-matrix generalized eigenvalue problem
+    from Nakatsukasa, Sète & Trefethen (2018).  The denominator of the
+    barycentric form is D(z) = Σ_k w_k/(z - z_k).  Its zeros (the poles of
+    r) are the finite eigenvalues of the (m+1)×(m+1) pencil (E, B):
 
-    Residues are computed as N(pole) / D'(pole) using the barycentric
-    representations of the numerator N and derivative D'.
+        E[0, 1:]  = wj
+        E[k, 0]   = 1       for k = 1..m
+        E[k, k]   = zj[k-1] for k = 1..m
+        B          = diag(0, 1, ..., 1)
+
+    Eliminating the bottom m rows gives Σ_k w_k/(λ - z_k) = 0, which is
+    exactly D(λ) = 0.  This replaces the polyfromroots → polydiv → polyroots
+    chain, which overflows in monomial basis for m ≳ 15 support points.
+
+    Residues are computed via the barycentric formulas for N(z) and D′(z),
+    which are numerically stable.
 
     Parameters
     ----------
@@ -204,16 +266,38 @@ def _aaa_poles_residues(zj, fj, wj):
     m = len(zj)
     if m == 0:
         return np.array([]), np.array([])
+    if wj is None or not np.isfinite(wj).all():
+        return np.array([]), np.array([])
 
-    # Denominator polynomial p(z) = sum_k w_k * prod_{j!=k}(z - z_j)
-    # q(z) = prod_k (z - z_k), degree m, ascending coefficients
-    q = nppoly.polyfromroots(zj)
-    p = np.zeros(m, dtype=complex)   # degree m-1, ascending
-    for k in range(m):
-        quot, _ = nppoly.polydiv(q, [-zj[k], 1.0])
-        p += wj[k] * quot
+    # Build the (m+1) x (m+1) companion pencil (E, B).
+    E = np.zeros((m + 1, m + 1), dtype=complex)
+    B = np.zeros((m + 1, m + 1), dtype=complex)
 
-    poles = nppoly.polyroots(p) if m > 1 else np.array([], dtype=complex)
+    E[0, 1:]   = wj           # barycentric weights in first row
+    E[1:, 0]   = 1.0          # ones in first column (rows 1..m)
+    E[1:, 1:]  = np.diag(zj)  # support points on diagonal (rows 1..m)
+    B[1:, 1:]  = np.eye(m)    # lower-right block is identity; B[0,0] = 0
+
+    # Generalized eigenvalues of E v = λ B v.
+    # B is singular (B[0,0]=0), so some eigenvalues are infinite.
+    # The finite ones satisfying D(λ)=0 are the poles of r.
+    try:
+        evals = scipy_eig(E, B, right=False)
+    except Exception:
+        return np.array([]), np.array([])
+
+    # Retain finite eigenvalues only.
+    finite_mask = np.isfinite(evals.real) & np.isfinite(evals.imag)
+    poles = evals[finite_mask]
+
+    # Discard eigenvalues that coincide with a support point (spurious roots
+    # of the companion pencil that are not true poles of D).
+    dist_to_support = np.min(np.abs(poles[:, None] - zj[None, :]), axis=1)
+    scale = np.abs(poles) + np.abs(zj).mean() + 1e-30
+    poles = poles[dist_to_support > 1e-10 * scale]
+
+    if len(poles) == 0:
+        return np.array([]), np.array([])
 
     # Residues: res_i = N(pole_i) / D'(pole_i)
     #   N(z)  = sum_k w_k f_k / (z - z_k)
@@ -308,7 +392,17 @@ def S_inverse(w_vals, S_vals, k):
         if fewer than k poles survive Stieltjes filtering in eigenvalues_from_G.
     """
     z_vals, G_vals = psi_inverse(w_vals, S_vals)
-    eigenvalues = eigenvalues_from_G(z_vals, G_vals, k)
+    # psi_inverse can produce inf/NaN near the degenerate boundary of the MP
+    # distribution (z → 0 when S_A → 0).  Discard those points so AAA receives
+    # only well-behaved data.
+    # Valid Stieltjes data requires z < 0 and G < 0 (both become positive when
+    # Newton converges to the wrong branch near the ψ-domain left boundary,
+    # where ψ′(z)→0 makes Newton ill-conditioned and causes it to overshoot to z>0).
+    finite = (
+        np.isfinite(z_vals) & np.isfinite(G_vals)
+        & (z_vals < 0) & (G_vals < 0)
+    )
+    eigenvalues = eigenvalues_from_G(z_vals[finite], G_vals[finite], k)
     if len(eigenvalues) < k:
         warnings.warn(
             f"Only {len(eigenvalues)} of {k} requested eigenvalues were recovered. "

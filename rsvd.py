@@ -1,4 +1,8 @@
+import warnings
+
 import numpy as np
+from s_transform import S_transform, S_inverse
+
 
 def rsvd(
     A,
@@ -6,9 +10,10 @@ def rsvd(
     p=10,
     n_iter=0,
     seed=None,
+    correction=False,
 ):
     """
-    Randomized SVD (Halko et al.) using a Gaussian sketch.
+    RSVD using a Gaussian sketch, with optional correction.
 
     Parameters
     ----------
@@ -18,17 +23,22 @@ def rsvd(
         Target rank k.
     p : int, default=10
         Oversampling parameter p, so sketch size is l = k + p.
-    n_iter : int, default=1
+    n_iter : int, default=0
         Number of power iterations.
     seed : int, or None
         Random seed / generator.
+    correction : bool, default=False
+        If True, apply the S-transform singular value correction.
+
+        Note: the theory assumes n_iter = 0.  Power iterations alter the
+        spectral distribution, so the correction is applied to the original
+        sketch Y = A @ Omega regardless of n_iter.
 
     Returns
     -------
     U : (m, k) ndarray
-    s : (k,) ndarray
+    Sigma : (k,) ndarray
     Vt : (k, n) ndarray
-        Approximate rank-k SVD: A ≈ U @ np.diag(s) @ Vt
     """
     A = np.asarray(A)
     m, n = A.shape
@@ -54,12 +64,16 @@ def rsvd(
     # Step 2: Form sample matrix Y = A Omega
     Y = A @ Omega
 
+    # Save the original sketch before power iterations: the S-transform
+    # correction theory is derived for Y = A Omega, not the power-iterated form.
+    Y_sketch = Y if n_iter == 0 else Y.copy()
+
     # Step 3: Optional power iterations
     # Y <- (A A^T)^q A Omega
     for _ in range(n_iter):
         Y, _ = np.linalg.qr(Y, mode="reduced")
         Y = A.T @ Y
-        Y , _ = np.linalg.qr(Y, mode="reduced")
+        Y, _ = np.linalg.qr(Y, mode="reduced")
         Y = A @ Y
 
     # Step 4: Orthonormal basis Q for range(Y)
@@ -75,8 +89,56 @@ def rsvd(
     U = Q @ U_tilde
 
     # Truncate to target rank
-    U = U[:, :k]
+    U     = U[:, :k]
     Sigma = Sigma[:k]
-    Vt = Vt[:k, :]
+    Vt    = Vt[:k, :]
+
+    if not correction:
+        return U, Sigma, Vt
+
+    # ------------------------------------------------------------------
+    # S-transform singular value correction
+    # ------------------------------------------------------------------
+    # Marchenko-Pastur ratio: Omega is (n x l), so W_l = (1/l) Omega Omega^T
+    # is (n x n) with limiting ratio c = n / l.
+    c = n / l
+
+    # Eigenvalues of (1/l) Y_sketch Y_sketch^T.
+    # Use the (l x l) matrix Y_sketch^T Y_sketch to avoid forming the
+    # potentially large (m x m) outer product; they share the same nonzero
+    # eigenvalues.  Pad with m - l zeros to represent the full m-dimensional
+    # empirical spectral measure.
+    eigs_nonzero = np.linalg.eigvalsh((1.0 / l) * (Y_sketch.T @ Y_sketch))
+    eigs_Y = np.concatenate([eigs_nonzero, np.zeros(max(0, m - l))])
+
+    # w-grid in (-1, 0) — use many more points than k for a good AAA fit.
+    # The ψ_Y-transform maps the negative real axis onto (-n_nz/m, 0), where
+    # n_nz is the number of strictly positive eigenvalues in eigs_Y.  For w
+    # below -n_nz/m there is no solution z < 0 to ψ_Y(z) = w, so the Newton
+    # iteration in S_transform diverges and produces NaN/inf.
+    #   • Full-rank sketch (signal+noise): n_nz = l, bound = -l/m = -1/c.
+    #   • Low-rank A (rank r < l):         n_nz = r, bound = -r/m  (tighter).
+    ev_thresh = eigs_nonzero.max() * 1e-8 if eigs_nonzero.max() > 0 else 0.0
+    n_nz = int(np.sum(eigs_nonzero > ev_thresh))
+    w_lo = max(-n_nz / m + 1e-3, -1.0 + 1e-3)
+    w = np.linspace(w_lo, -1e-3, 500)
+
+    # S^Y(w) from the empirical spectral measure of (1/l) Y Y^T.
+    S_Y = S_transform(eigs_Y, w)
+
+    # Deconvolve Marchenko-Pastur: S^A(w) = S^Y(w) / S^MP(w) = S^Y(w)(1 + c*w)
+    S_A = S_Y.real * (1.0 + c * w)
+
+    # Recover corrected eigenvalues of A A^T, then convert to singular values.
+    # Use catch_warnings so that each call to rsvd emits its own warning even
+    # when called multiple times from the same source location — Python's default
+    # filter would otherwise suppress duplicates after the first occurrence.
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        lambda_corr = S_inverse(w, S_A, k)
+    sigma_corr  = np.sqrt(np.maximum(lambda_corr, 0.0))
+
+    # Replace as many singular values as were successfully recovered.
+    Sigma[:len(sigma_corr)] = sigma_corr
 
     return U, Sigma, Vt
