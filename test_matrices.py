@@ -35,10 +35,6 @@ def run_test(name, A, sigma_true, k, p, seed=None):
     _, sigma_corr, _ = rsvd(A, k=k, p=p, seed=seed, correction=True)
 
     print(f"=== {name} ===")
-    print(f"True singular values:      {sigma_true}")
-    print(f"RSVD singular values:      {sigma_rsvd}")
-    print(f"Corrected singular values: {sigma_corr}")
-    print()
     print(f"RSVD error:      {np.linalg.norm(sigma_rsvd - sigma_true)}")
     print(f"Corrected error: {np.linalg.norm(sigma_corr - sigma_true)}")
 

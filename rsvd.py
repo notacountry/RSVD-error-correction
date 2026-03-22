@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 from s_transform import S_transform, S_inverse
 
@@ -130,12 +128,7 @@ def rsvd(
     S_A = S_Y.real * (1.0 + c * w)
 
     # Recover corrected eigenvalues of A A^T, then convert to singular values.
-    # Use catch_warnings so that each call to rsvd emits its own warning even
-    # when called multiple times from the same source location — Python's default
-    # filter would otherwise suppress duplicates after the first occurrence.
-    with warnings.catch_warnings():
-        warnings.simplefilter("always")
-        lambda_corr = S_inverse(w, S_A, k)
+    lambda_corr = S_inverse(w, S_A, k)
     sigma_corr  = np.sqrt(np.maximum(lambda_corr, 0.0))
 
     # Replace as many singular values as were successfully recovered.
