@@ -7,13 +7,30 @@ Assumptions
 1. Eigenvalues are non-negative.
 2. The input is a probability measure.
 3. w lies in (-1, 0).
+
+Implementation note
+-------------------
+S_transform uses a *parametric* approach instead of Newton iteration.
+Rather than solving psi_Y(z) = w for a fixed w (Newton, up to max_iter steps per point),
+we choose z freely and evaluate
+
+    w(z) = z * m_Y(z) - 1          (= psi_Y(z), direct formula)
+    S_Y(z) = (1 + w(z)) / (w(z) * z)
+
+across a log-spaced z-grid on the negative real axis, yielding the parametric
+curve (w_param, S_param) in one vectorised call.  Evaluation at requested
+w_vals is then a plain 1-D interpolation.
 """
 import warnings
 
 import numpy as np
-import numpy.polynomial.polynomial as nppoly
 from scipy.linalg import eig as scipy_eig
+from scipy.interpolate import CubicSpline
 
+
+# ---------------------------------------------------------------------------
+# Stieltjes transform
+# ---------------------------------------------------------------------------
 
 def stieltjes_transform(z, eigenvalues):
     """
@@ -33,6 +50,10 @@ def stieltjes_transform(z, eigenvalues):
     return np.mean(1.0 / (z[..., None] - eigenvalues), axis=-1)
 
 
+# ---------------------------------------------------------------------------
+# S-transform  (parametric — no Newton)
+# ---------------------------------------------------------------------------
+
 def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
     """
     Compute S-transform of the ESM of a matrix with given eigenvalues.
@@ -42,15 +63,27 @@ def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
     eigenvalues : array_like of real, shape (n,)
         Eigenvalues defining the empirical spectral measure.
     w_vals : array_like of complex
-        Points where S(w) is evaluated.
+        Points where S(w) is evaluated.  Should lie in (-1, 0).
     tol : float
-        Convergence tolerance on the Newton step size.
+        Accepted for API compatibility; unused.
     max_iter : int
-        Maximum Newton iterations.
+        Accepted for API compatibility; unused.
 
     Returns
     -------
     S_vals : ndarray of complex, shape (len(w_vals),)
+
+    Notes
+    -----
+    Implementation uses a parametric z-grid approach (no Newton iteration):
+
+        z  chosen on the negative real axis
+        m_Y(z) = stieltjes_transform(z, eigenvalues)   [one vectorised call]
+        w(z)   = z * m_Y(z) - 1                        [= psi_Y(z), direct]
+        S_Y(z) = (1 + w(z)) / (w(z) * z)               [direct]
+
+    The resulting parametric cloud (w_param, S_param) is then interpolated
+    via CubicSpline on chi_Y(w) = z to supply S at the requested w_vals.
     """
     eigenvalues = np.asarray(eigenvalues, dtype=float)
     w_vals = np.asarray(w_vals, dtype=complex)
@@ -58,72 +91,55 @@ def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
     if len(w_vals) == 0:
         return np.array([], dtype=complex)
 
-    m = len(eigenvalues)
+    eigs_pos = eigenvalues[eigenvalues > 0]
+    if len(eigs_pos) == 0:
+        return np.full(len(w_vals), np.nan, dtype=complex)
 
-    # Separate nonzero and zero eigenvalues.
-    # Zero eigenvalues contribute a 1/z pole to G(z), making ψ′(z) → 0 at
-    # z = 0.  Near the left ψ-domain boundary w → −n_nz/m, the correct
-    # solution z_★ → 0⁻ and Newton's convergence degenerates (step → ∞).
+    lam_max  = eigs_pos.max()
+    lam_mean = eigs_pos.mean()
+
+    # Log-spaced z-grid on the negative real axis.
+    # Dense near z = 0 (signal poles cause sharp features in psi_Y there);
+    # sparse far out (psi_Y ≈ 0, S_Y ≈ const).
+    z_grid = -np.geomspace(lam_mean * 1e-4, lam_max * 1e4, 2000)
+
+    # Parametric evaluation — one vectorised Stieltjes call.
+    m_Y     = stieltjes_transform(z_grid, eigenvalues).real   # real for z < 0
+    w_param = z_grid * m_Y - 1.0                              # psi_Y(z) = w
+
+    # Retain only well-posed points: w ∈ (-1, 0), z finite and negative.
+    valid = (
+        (w_param > -1.0) & (w_param < -1e-12)
+        & np.isfinite(w_param) & np.isfinite(z_grid)
+    )
+    w_p = w_param[valid]
+    z_p = z_grid[valid]
+
+    if len(w_p) < 2:
+        return np.full(len(w_vals), np.nan, dtype=complex)
+
+    # Sort by w (w_param is monotone, but direction depends on z_grid ordering).
+    order = np.argsort(w_p)
+    w_p   = w_p[order]
+    z_p   = z_p[order]
+
+    # Interpolate chi_Y(w) = z (the inverse of psi_Y) rather than S_Y(w).
     #
-    # Mathematical fix: use the identity
-    #   ψ_Y(z) = (n_nz/m) · ψ_nz(z)
-    # where ψ_nz is the ψ-function of the NONZERO probability sub-measure
-    # (n_nz eigenvalues, normalised to sum to 1).  Solving ψ_Y(z) = w is
-    # then equivalent to ψ_nz(z) = α·w where α = m/n_nz.  With no 1/z
-    # contribution, ψ_nz′ is bounded away from zero and Newton is
-    # well-conditioned throughout w ∈ (−1, 0).
-    ev_max = eigenvalues.max()
-    nz_mask = eigenvalues > (ev_max * 1e-8 if ev_max > 0 else 0.0)
-    eigs_nz = eigenvalues[nz_mask]
-    n_nz = len(eigs_nz)
+    # S_Y(w) = (1+w)/w * chi_Y(w) varies over ~7 orders of magnitude in the
+    # typical w-range, making any polynomial interpolation ill-conditioned —
+    # cubic spline on S produces oscillations that inflate the AAA degree.
+    # chi_Y(w) = z is smooth, bounded, and monotone on the entire domain,
+    # so CubicSpline on z is accurate with the same knot density.
+    # Once we have chi_Y at the requested w_vals, S_Y follows directly.
+    cs_z   = CubicSpline(w_p, z_p, extrapolate=True)
+    z_at_w = cs_z(w_vals.real)
+    S_out  = (1.0 + w_vals.real) / w_vals.real * z_at_w
+    return S_out.astype(complex)
 
-    if n_nz == 0:
-        return np.full_like(w_vals, np.nan)
 
-    alpha   = m / n_nz            # rescaling factor: w′ = α·w ∈ (−1, 0)
-    w_prime = alpha * w_vals      # domain of the nonzero probability measure
-
-    # Initial guess: z = mean_nz / w′ is always negative for w′ < 0.
-    mean_nz = eigs_nz.mean()
-    z = mean_nz / w_prime
-
-    # Newton on ψ_nz(z) − w′ = 0 in the t = log(−z) parametrisation.
-    #
-    # Standard Newton in z-space has f(z) = ψ_nz(z) − w′ and
-    # f′(z) = ψ_nz′(z) which is tiny when |z| >> max(λᵢ), causing the
-    # step f/f′ to overshoot past z = 0 on the first iteration.
-    #
-    # In t-space (z = −exp(t)):
-    #   f_t′ = z · ψ_nz′(z) = z · (Gz + z·dGz)
-    #        = z · dfz   (always positive since z < 0 and dfz < 0)
-    # This is O(1) rather than O(1/z²), so Newton is well-conditioned
-    # throughout the domain and can never cross z = 0.
-    # Work in real arithmetic: z < 0 always, so t = log(−z) is real.
-    # Complex drift would let t.real grow unboundedly → exp overflow.
-    t = np.log(-z.real)   # real array: t = log(−z), so z = −exp(t)
-
-    for _ in range(max_iter):
-        z    = -np.exp(t)
-        Gz   = stieltjes_transform(z, eigs_nz).real
-        d    = 1.0 / (z[..., None] - eigs_nz)
-        dGz  = -np.mean(d**2, axis=-1).real
-        fz   = (z * Gz - 1.0 - w_prime.real)
-        dfz  = Gz + z * dGz           # ψ_nz′(z) < 0
-        # t-space derivative: f_t′ = z · dfz  (> 0 since z < 0 and dfz < 0)
-        dft  = z * dfz
-        safe = np.abs(dft) > 1e-14
-        step = np.where(safe, fz / np.where(safe, dft, 1.0), 0.0)
-        # Clamp step to at most 3 in log-space (|z| changes by ≤ e^3 ≈ 20x per
-        # iteration) and keep t bounded to prevent exp overflow.
-        t   -= np.clip(step, -3.0, 3.0)
-        t    = np.clip(t, -600.0, 600.0)
-        if not (np.abs(step) >= tol).any():
-            break
-
-    z = -np.exp(t)
-
-    return (1.0 + w_vals) / w_vals * z
-
+# ---------------------------------------------------------------------------
+# psi_inverse
+# ---------------------------------------------------------------------------
 
 def psi_inverse(w_vals, S_vals):
     """
@@ -155,6 +171,10 @@ def psi_inverse(w_vals, S_vals):
     G_vals = (1.0 + w_vals) / z_vals
     return z_vals, G_vals
 
+
+# ---------------------------------------------------------------------------
+# AAA rational approximation
+# ---------------------------------------------------------------------------
 
 def _aaa(z_vals, G_vals, tol=1e-13, mmax=100):
     """
@@ -315,6 +335,10 @@ def _aaa_poles_residues(zj, fj, wj):
     return poles, residues
 
 
+# ---------------------------------------------------------------------------
+# Eigenvalue recovery from Green's function data
+# ---------------------------------------------------------------------------
+
 def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13):
     """
     Recover k eigenvalues of mu^A from (z, G) data on the negative real axis.
@@ -325,9 +349,7 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13):
       - poles must be real and positive  (support of mu^A lies in (0, inf))
       - residues must be real and positive  (mu^A is a positive measure)
 
-    Poles failing either constraint are discarded as spurious. This can happen
-    when mu^A has a nontrivial continuous component (the k-atom model is then
-    only approximate), or when AAA overfits with too many support points.
+    Poles failing either constraint are discarded as spurious.
 
     Parameters
     ----------
@@ -370,6 +392,10 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13):
     return candidates[:k]
 
 
+# ---------------------------------------------------------------------------
+# S_inverse
+# ---------------------------------------------------------------------------
+
 def S_inverse(w_vals, S_vals, k):
     """
     Recover k corrected eigenvalues from S-transform values.
@@ -392,12 +418,6 @@ def S_inverse(w_vals, S_vals, k):
         if fewer than k poles survive Stieltjes filtering in eigenvalues_from_G.
     """
     z_vals, G_vals = psi_inverse(w_vals, S_vals)
-    # psi_inverse can produce inf/NaN near the degenerate boundary of the MP
-    # distribution (z → 0 when S_A → 0).  Discard those points so AAA receives
-    # only well-behaved data.
-    # Valid Stieltjes data requires z < 0 and G < 0 (both become positive when
-    # Newton converges to the wrong branch near the ψ-domain left boundary,
-    # where ψ′(z)→0 makes Newton ill-conditioned and causes it to overshoot to z>0).
     finite = (
         np.isfinite(z_vals) & np.isfinite(G_vals)
         & (z_vals < 0) & (G_vals < 0)
@@ -405,8 +425,7 @@ def S_inverse(w_vals, S_vals, k):
     eigenvalues = eigenvalues_from_G(z_vals[finite], G_vals[finite], k)
     if len(eigenvalues) < k:
         warnings.warn(
-            f"Only {len(eigenvalues)} of {k} requested eigenvalues were recovered. "
-            "Consider using a finer w-grid or check that the input measure is discrete.",
+            f"Only {len(eigenvalues)} of {k} requested eigenvalues were recovered. ",
             RuntimeWarning,
             stacklevel=2,
         )
