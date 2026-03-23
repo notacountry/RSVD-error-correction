@@ -12,7 +12,7 @@ from itertools import product
 import numpy as np
 
 from rsvd_correction.rsvd import rsvd
-from rsvd_correction.matrix_generators import signal_plus_noise
+from rsvd_correction.matrix_generators import SignalPlusNoise
 
 
 P            = 10
@@ -39,16 +39,12 @@ def run_parameter_sweep():
 
         actual_c     = N / (K + P)
         sigma_signal = np.array([10.0 / (i + 1) for i in range(K)])
+        gen = SignalPlusNoise(sigma_signal=sigma_signal, noise_level=noise)
 
         rsvd_errs, corr_errs = [], []
 
         for seed in range(N_SEEDS):
-            A, _ = signal_plus_noise(
-                n=N, k=K,
-                sigma_signal=sigma_signal,
-                noise_level=noise,
-                seed=seed,
-            )
+            A, _ = gen(n=N, k=K, seed=seed)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 try:

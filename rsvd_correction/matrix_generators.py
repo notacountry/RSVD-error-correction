@@ -1,7 +1,33 @@
 """
 Test matrix generators for RSVD eigenvalue correction experiments.
 """
+from typing import Protocol
+
 import numpy as np
+
+
+class MatrixGenerator(Protocol):
+    """Callable that produces a random matrix and its true top-k singular values."""
+
+    def __call__(
+        self, n: int, k: int, seed: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Parameters
+        ----------
+        n : int
+            Matrix dimension.
+        k : int
+            Number of top singular values to return.
+        seed : int or None
+
+        Returns
+        -------
+        A : (n, n) ndarray
+        sigma_true : (k,) ndarray
+            Top-k exact singular values.
+        """
+        ...
 
 
 def _random_orthonormal(n, k, rng):
@@ -10,146 +36,112 @@ def _random_orthonormal(n, k, rng):
     return Q
 
 
-def exact_low_rank(n, k, sigma, seed=None):
+class ExactLowRank:
     """
     A = U diag(sigma) Vt, exactly rank k.
 
     Parameters
     ----------
-    n : int
-        Matrix dimension.
-    k : int
-        Rank.
     sigma : array_like of shape (k,)
         Singular values.
-    seed : int or None
-
-    Returns
-    -------
-    A : (n, n) ndarray
-    sigma_true : (k,) ndarray
-        Top-k exact singular values.
     """
-    rng = np.random.default_rng(seed)
-    sigma = np.asarray(sigma, dtype=float)
-    U = _random_orthonormal(n, k, rng)
-    V = _random_orthonormal(n, k, rng)
-    A = U @ np.diag(sigma) @ V.T
-    return A, np.sort(sigma)[::-1]
+
+    def __init__(self, sigma):
+        self.sigma = np.asarray(sigma, dtype=float)
+
+    def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        U = _random_orthonormal(n, k, rng)
+        V = _random_orthonormal(n, k, rng)
+        A = U @ np.diag(self.sigma) @ V.T
+        return A, np.sort(self.sigma)[::-1]
 
 
-def diagonal_known_spectrum(n, k, sigma, seed=None):
+class DiagonalKnownSpectrum:
     """
     A = diag(sigma_1, ..., sigma_k, 0, ..., 0).
 
     Parameters
     ----------
-    n : int
-        Matrix dimension.
-    k : int
-        Number of nonzero singular values.
     sigma : array_like of shape (k,)
         Singular values.
-    seed : int or None
-        Unused; present for a consistent interface.
-
-    Returns
-    -------
-    A : (n, n) ndarray
-    sigma_true : (k,) ndarray
-        Top-k exact singular values.
     """
-    sigma = np.asarray(sigma, dtype=float)
-    d = np.zeros(n)
-    d[:k] = np.sort(sigma)[::-1]
-    A = np.diag(d)
-    return A, d[:k]
+
+    def __init__(self, sigma):
+        self.sigma = np.asarray(sigma, dtype=float)
+
+    def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        d = np.zeros(n)
+        d[:k] = np.sort(self.sigma)[::-1]
+        return np.diag(d), d[:k]
 
 
-def polynomial_decay(n, k, alpha=1.0, seed=None):
+class PolynomialDecay:
     """
     Singular values sigma_i = i^{-alpha}, i = 1, ..., n.
 
     Parameters
     ----------
-    n : int
-        Matrix dimension.
-    k : int
-        Number of singular values to treat as signal (top k returned).
     alpha : float
         Decay exponent.  alpha=1 gives sigma_i = 1/i.
-    seed : int or None
-
-    Returns
-    -------
-    A : (n, n) ndarray
-    sigma_true : (k,) ndarray
-        Top-k exact singular values.
     """
-    rng = np.random.default_rng(seed)
-    sigma = 1.0 / np.arange(1, n + 1) ** alpha
-    U = _random_orthonormal(n, n, rng)
-    V = _random_orthonormal(n, n, rng)
-    A = U @ np.diag(sigma) @ V.T
-    return A, sigma[:k]
+
+    def __init__(self, alpha: float = 1.0):
+        self.alpha = alpha
+
+    def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        sigma = 1.0 / np.arange(1, n + 1) ** self.alpha
+        U = _random_orthonormal(n, n, rng)
+        V = _random_orthonormal(n, n, rng)
+        A = U @ np.diag(sigma) @ V.T
+        return A, sigma[:k]
 
 
-def exponential_decay(n, k, beta=0.5, seed=None):
+class ExponentialDecay:
     """
     Singular values sigma_i = exp(-beta * i), i = 0, ..., n-1.
 
     Parameters
     ----------
-    n : int
-        Matrix dimension.
-    k : int
-        Number of singular values to treat as signal (top k returned).
     beta : float
         Decay rate.
-    seed : int or None
-
-    Returns
-    -------
-    A : (n, n) ndarray
-    sigma_true : (k,) ndarray
-        Top-k exact singular values.
     """
-    rng = np.random.default_rng(seed)
-    sigma = np.exp(-beta * np.arange(n))
-    U = _random_orthonormal(n, n, rng)
-    V = _random_orthonormal(n, n, rng)
-    A = U @ np.diag(sigma) @ V.T
-    return A, sigma[:k]
+
+    def __init__(self, beta: float = 0.5):
+        self.beta = beta
+
+    def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        sigma = np.exp(-self.beta * np.arange(n))
+        U = _random_orthonormal(n, n, rng)
+        V = _random_orthonormal(n, n, rng)
+        A = U @ np.diag(sigma) @ V.T
+        return A, sigma[:k]
 
 
-def signal_plus_noise(n, k, sigma_signal, noise_level=1.0, seed=None):
+class SignalPlusNoise:
     """
     A = U diag(sigma_signal) Vt + (noise_level / sqrt(n)) * G,
     G ~ N(0,1)^{n x n}.
 
     Parameters
     ----------
-    n : int
-        Matrix dimension (square).
-    k : int
-        Rank of the signal component.
     sigma_signal : array_like of shape (k,)
         Signal singular values.
     noise_level : float
         Scales the Gaussian noise matrix.
-    seed : int or None
-
-    Returns
-    -------
-    A : (n, n) ndarray
-    sigma_true : (k,) ndarray
-        Top-k exact singular values.
     """
-    rng = np.random.default_rng(seed)
-    sigma_signal = np.asarray(sigma_signal, dtype=float)
-    U = _random_orthonormal(n, k, rng)
-    V = _random_orthonormal(n, k, rng)
-    signal = U @ np.diag(sigma_signal) @ V.T
-    noise = (noise_level / np.sqrt(n)) * rng.standard_normal((n, n))
-    A = signal + noise
-    return A, np.sort(sigma_signal)[::-1]
+
+    def __init__(self, sigma_signal, noise_level: float = 1.0):
+        self.sigma_signal = np.asarray(sigma_signal, dtype=float)
+        self.noise_level = noise_level
+
+    def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        U = _random_orthonormal(n, k, rng)
+        V = _random_orthonormal(n, k, rng)
+        signal = U @ np.diag(self.sigma_signal) @ V.T
+        noise = (self.noise_level / np.sqrt(n)) * rng.standard_normal((n, n))
+        A = signal + noise
+        return A, np.sort(self.sigma_signal)[::-1]

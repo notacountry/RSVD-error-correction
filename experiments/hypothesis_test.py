@@ -8,7 +8,7 @@ import numpy as np
 from scipy import stats
 
 from rsvd_correction.rsvd import rsvd
-from rsvd_correction.matrix_generators import signal_plus_noise
+from rsvd_correction.matrix_generators import SignalPlusNoise
 
 
 def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
@@ -39,13 +39,11 @@ def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
             continue
         actual_c     = N / (K + p)
         sigma_signal = np.array([10.0 / (i + 1) for i in range(K)])
+        gen = SignalPlusNoise(sigma_signal=sigma_signal, noise_level=noise)
 
         D = []
         for seed in range(n_trials):
-            A, _ = signal_plus_noise(
-                n=N, k=K, sigma_signal=sigma_signal,
-                noise_level=noise, seed=seed,
-            )
+            A, _ = gen(n=N, k=K, seed=seed)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 try:
