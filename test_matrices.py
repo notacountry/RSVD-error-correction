@@ -3,40 +3,11 @@ Test matrices for RSVD eigenvalue correction.
 """
 import numpy as np
 
-from rsvd import rsvd
-
 
 def _random_orthonormal(n, k, rng):
     """Return a (n, k) matrix with orthonormal columns."""
     Q, _ = np.linalg.qr(rng.standard_normal((n, k)))
     return Q
-
-
-def run_test(name, A, sigma_true, k, p, seed=None):
-    """
-    Run plain and corrected RSVD on A and print a comparison table.
-
-    Parameters
-    ----------
-    name : str
-        Label printed as the section header.
-    A : ndarray
-        Input matrix.
-    sigma_true : ndarray, shape (k,)
-        Ground-truth singular values.
-    k : int
-        Target rank passed to rsvd.
-    p : int
-        Oversampling parameter passed to rsvd.
-    seed : int or None
-        Random seed passed to rsvd.
-    """
-    _, sigma_rsvd, _ = rsvd(A, k=k, p=p, seed=seed)
-    _, sigma_corr, _ = rsvd(A, k=k, p=p, seed=seed, correction=True)
-
-    print(f"=== {name} ===")
-    print(f"RSVD error:      {np.linalg.norm(sigma_rsvd - sigma_true)}")
-    print(f"Corrected error: {np.linalg.norm(sigma_corr - sigma_true)}")
 
 
 def exact_low_rank(n, k, sigma, seed=None):

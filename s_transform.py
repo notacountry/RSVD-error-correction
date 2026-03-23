@@ -54,24 +54,26 @@ def stieltjes_transform(z, eigenvalues):
 # S-transform  (parametric — no Newton)
 # ---------------------------------------------------------------------------
 
-def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
+def S_transform(eigenvalues, w_vals):
     """
     Compute S-transform of the ESM of a matrix with given eigenvalues.
+
+    Returns the standard S-transform:
+
+        S(w) = (1 + w) / w * chi(w)
+
+    where chi(w) = psi^{-1}(w) and psi(z) = z * m(z) - 1.
 
     Parameters
     ----------
     eigenvalues : array_like of real, shape (n,)
         Eigenvalues defining the empirical spectral measure.
-    w_vals : array_like of complex
+    w_vals : array_like of real
         Points where S(w) is evaluated.  Should lie in (-1, 0).
-    tol : float
-        Accepted for API compatibility; unused.
-    max_iter : int
-        Accepted for API compatibility; unused.
 
     Returns
     -------
-    S_vals : ndarray of complex, shape (len(w_vals),)
+    S_vals : ndarray of float, shape (len(w_vals),)
 
     Notes
     -----
@@ -80,20 +82,20 @@ def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
         z  chosen on the negative real axis
         m_Y(z) = stieltjes_transform(z, eigenvalues)   [one vectorised call]
         w(z)   = z * m_Y(z) - 1                        [= psi_Y(z), direct]
-        S_Y(z) = (1 + w(z)) / (w(z) * z)               [direct]
+        S_Y(z) = (1 + w(z)) / w(z) * z                 [standard S-transform]
 
     The resulting parametric cloud (w_param, S_param) is then interpolated
     via CubicSpline on chi_Y(w) = z to supply S at the requested w_vals.
     """
     eigenvalues = np.asarray(eigenvalues, dtype=float)
-    w_vals = np.asarray(w_vals, dtype=complex)
+    w_vals = np.asarray(w_vals, dtype=float)
 
     if len(w_vals) == 0:
-        return np.array([], dtype=complex)
+        return np.array([], dtype=float)
 
     eigs_pos = eigenvalues[eigenvalues > 0]
     if len(eigs_pos) == 0:
-        return np.full(len(w_vals), np.nan, dtype=complex)
+        return np.full(len(w_vals), np.nan, dtype=float)
 
     lam_max  = eigs_pos.max()
     lam_mean = eigs_pos.mean()
@@ -113,7 +115,6 @@ def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
     n_pos    = len(eigs_pos)
     alpha    = (n_total - n_pos) / n_total          # exact mass at 0
     m_pos    = stieltjes_transform(z_grid, eigs_pos).real
-    m_Y      = alpha / z_grid + (n_pos / n_total) * m_pos
     w_param  = (alpha - 1.0) + (n_pos / n_total) * z_grid * m_pos  # psi_Y(z)
 
     # Retain only well-posed points: w ∈ (-1, 0), z finite and negative.
@@ -125,7 +126,7 @@ def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
     z_p = z_grid[valid]
 
     if len(w_p) < 2:
-        return np.full(len(w_vals), np.nan, dtype=complex)
+        return np.full(len(w_vals), np.nan, dtype=float)
 
     # Sort by w (w_param is monotone, but direction depends on z_grid ordering).
     order = np.argsort(w_p)
@@ -134,16 +135,16 @@ def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
 
     # Interpolate chi_Y(w) = z (the inverse of psi_Y) rather than S_Y(w).
     #
-    # S_Y(w) = (1+w)/w * chi_Y(w) varies over ~7 orders of magnitude in the
+    # S_Y(w) = (1+w)/w * z varies over ~7 orders of magnitude in the
     # typical w-range, making any polynomial interpolation ill-conditioned —
     # cubic spline on S produces oscillations that inflate the AAA degree.
     # chi_Y(w) = z is smooth, bounded, and monotone on the entire domain,
     # so CubicSpline on z is accurate with the same knot density.
     # Once we have chi_Y at the requested w_vals, S_Y follows directly.
     cs_z   = CubicSpline(w_p, z_p, extrapolate=True)
-    z_at_w = cs_z(w_vals.real)
-    S_out  = (1.0 + w_vals.real) / w_vals.real * z_at_w
-    return S_out.astype(complex)
+    z_at_w = cs_z(w_vals)
+    S_out  = (1.0 + w_vals) / w_vals * z_at_w
+    return S_out
 
 
 # ---------------------------------------------------------------------------
@@ -219,13 +220,16 @@ def _aaa(z_vals, G_vals, tol=1e-13, mmax=100):
     M = len(z)
     F_scale = np.max(np.abs(F)) or 1.0
 
+    # Pre-allocate the full Cauchy matrix; fill one column per iteration.
+    n_iters = min(mmax, M - 1)
+    C = np.empty((M, n_iters), dtype=float)
+
     mask = np.ones(M, dtype=bool)   # True = non-support point
     zj_list, fj_list = [], []
-    C_cols = []                     # columns of the Cauchy matrix
     R = np.full(M, np.mean(F))
     wj = None
 
-    for _ in range(min(mmax, M - 1)):
+    for col in range(n_iters):
         J_arr = np.where(mask)[0]
         err = np.abs(F[J_arr] - R[J_arr])
 
@@ -238,23 +242,23 @@ def _aaa(z_vals, G_vals, tol=1e-13, mmax=100):
         mask[j_star] = False
 
         with np.errstate(divide="ignore"):
-            C_cols.append(1.0 / (z - zj_list[-1]))
-        C = np.column_stack(C_cols)
+            C[:, col] = 1.0 / (z - zj_list[-1])
 
         fj = np.array(fj_list)
         J_arr = np.where(mask)[0]
+        C_view = C[:, :col + 1]
 
         # Loewner matrix: L[i,k] = (F[i] - fj[k]) / (z[i] - zj[k])
         #                        = (F[i] - fj[k]) * C[i,k]
-        L = (F[J_arr, None] - fj[None, :]) * C[J_arr, :]
+        L = (F[J_arr, None] - fj[None, :]) * C_view[J_arr, :]
 
         # Weights = right singular vector for smallest singular value
         _, _, Vh = np.linalg.svd(L, full_matrices=False)
         wj = Vh[-1, :]
 
         # Update rational approximant at non-support points
-        N = C[J_arr, :] @ (wj * fj)
-        D = C[J_arr, :] @ wj
+        N = C_view[J_arr, :] @ (wj * fj)
+        D = C_view[J_arr, :] @ wj
         safe = np.abs(D) > 0
         R[J_arr[safe]] = N[safe] / D[safe]
 
@@ -331,15 +335,13 @@ def _aaa_poles_residues(zj, fj, wj):
     # Residues: res_i = N(pole_i) / D'(pole_i)
     #   N(z)  = sum_k w_k f_k / (z - z_k)
     #   D'(z) = -sum_k w_k / (z - z_k)^2
-    residues = np.empty(len(poles), dtype=complex)
-    for i, pole in enumerate(poles):
-        d = pole - zj
-        if np.min(np.abs(d)) < 1e-14:
-            residues[i] = np.nan
-            continue
-        N_val  =  np.sum(wj * fj / d)
-        Dp_val = -np.sum(wj / d**2)
-        residues[i] = N_val / Dp_val
+    #
+    # Vectorised over all poles simultaneously: d[i, k] = poles[i] - zj[k]
+    d = poles[:, None] - zj[None, :]                    # (n_poles, m)
+    near = np.min(np.abs(d), axis=1) < 1e-14           # mask near-coincident poles
+    N_vals  =  (wj * fj / d).sum(axis=1)
+    Dp_vals = -(wj / d**2).sum(axis=1)
+    residues = np.where(near, np.nan + 0j, N_vals / Dp_vals)
 
     return poles, residues
 
@@ -348,7 +350,7 @@ def _aaa_poles_residues(zj, fj, wj):
 # Eigenvalue recovery from Green's function data
 # ---------------------------------------------------------------------------
 
-def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13):
+def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13, imag_tol=1e-6):
     """
     Recover k eigenvalues of mu^A from (z, G) data on the negative real axis.
 
@@ -371,6 +373,11 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13):
         Number of eigenvalues to return (largest k retained after filtering).
     tol : float
         AAA convergence tolerance on the relative sup-norm residual.
+    imag_tol : float
+        Relative imaginary tolerance for filtering spurious complex poles.
+        Poles with |Im(pole)| / (|Re(pole)| + 1e-30) > imag_tol are discarded.
+        Tighter values risk dropping nearly-real poles; looser values risk
+        accepting complex noise. Default: 1e-6.
 
     Returns
     -------
@@ -387,15 +394,31 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13):
 
     poles, residues = _aaa_poles_residues(zj, fj, wj)
 
-    # Enforce real positive poles & residues
-    imag_tol = 1e-6
+    # Enforce real positive poles & residues.
+    # Also discard poles at lambda > max|z|: such poles contribute only
+    # residue / (z - lambda) ~ residue / lambda to G on the negative real
+    # axis, which is negligible when lambda >> max|z|.  Any pole found there
+    # is a spurious artefact of the rational approximation and cannot be
+    # resolved from data on [-max|z|, 0).
+    max_z = np.max(np.abs(z_vals))
     valid = (
         np.isfinite(residues)
         & (np.abs(poles.imag)    < imag_tol * (np.abs(poles.real)    + 1e-30))
         & (np.abs(residues.imag) < imag_tol * (np.abs(residues.real) + 1e-30))
         & (poles.real    > 0)
+        & (poles.real    < max_z)
         & (residues.real > 0)
     )
+
+    # Second pass: remove poles whose residue is negligibly small relative to
+    # the other valid poles.  A genuine eigenvalue of A contributes residue
+    # ~ 1/N to m_A(z); a spurious AAA pole can have an arbitrarily small
+    # residue that still passes the positivity check.  If any valid pole has a
+    # residue less than 10% of the mean valid residue, it is too small to be a
+    # real eigenvalue and is discarded.
+    if valid.any():
+        mean_res = residues[valid].real.mean()
+        valid &= (residues.real >= 0.1 * mean_res)
 
     candidates = np.sort(poles[valid].real)[::-1]
     return candidates[:k]
@@ -405,7 +428,7 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13):
 # S_inverse
 # ---------------------------------------------------------------------------
 
-def S_inverse(w_vals, S_vals, k):
+def S_inverse(w_vals, S_vals, k, imag_tol=1e-6):
     """
     Recover k corrected eigenvalues from S-transform values.
     For best results, pass a fine, uniform w-grid in (-1, 0) with
@@ -419,6 +442,8 @@ def S_inverse(w_vals, S_vals, k):
         S-transform values at w_vals.
     k : int
         Number of eigenvalues to recover.
+    imag_tol : float
+        Passed through to eigenvalues_from_G. See that function's docstring.
 
     Returns
     -------
@@ -431,10 +456,10 @@ def S_inverse(w_vals, S_vals, k):
         np.isfinite(z_vals) & np.isfinite(G_vals)
         & (z_vals < 0) & (G_vals < 0)
     )
-    eigenvalues = eigenvalues_from_G(z_vals[finite], G_vals[finite], k)
+    eigenvalues = eigenvalues_from_G(z_vals[finite], G_vals[finite], k, imag_tol=imag_tol)
     if len(eigenvalues) < k:
         warnings.warn(
-            f"Only {len(eigenvalues)} of {k} requested eigenvalues were recovered. ",
+            f"Only {len(eigenvalues)} of {k} requested eigenvalues were recovered.",
             RuntimeWarning,
             stacklevel=2,
         )

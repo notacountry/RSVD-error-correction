@@ -127,11 +127,9 @@ def rsvd(
     # S^Y(w) from the empirical spectral measure of (1/l) Y Y^T.
     S_Y = S_transform(eigs_Y, w)
 
-    # Deconvolve Marchenko-Pastur: S^MP(w) = 1/(1+cw), so S^A = S^Y / S^MP.
-    # NOTE: S_transform returns S_code = (1+w)/w * z (not the standard S_std =
-    # (1+w)/(w*z)).  In this convention S_code = S_std * z^2, so the standard
-    # identity S_A_std = S_Y_std * (1+cw) becomes S_code_A = S_code_Y / (1+cw).
-    S_A = S_Y.real / (1.0 + c * w)
+    # Deconvolve Marchenko-Pastur: S^MP(w) = 1/(1+cw), so S^A = S^Y * S^MP^{-1}.
+    # Standard identity: S^A(w) = S^Y(w) * (1 + cw).
+    S_A = S_Y * (1.0 + c * w)
 
     # Recover corrected eigenvalues of A A^T, then convert to singular values.
     lambda_corr = S_inverse(w, S_A, k)
