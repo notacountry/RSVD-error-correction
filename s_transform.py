@@ -71,50 +71,40 @@ def S_transform(eigenvalues, w_vals):
 
     # Find chi_Y s.t. chi_Y(w) = z, then S_Y(w) = (1 + w) / w * chi_Y(w).
     # chi_Y(w) = z is smooth and monotone on the entire domain, unlike S.
-    chi_Y  = CubicSpline(w_param, z_grid, extrapolate=True)
-    return (1.0 + w_vals) / w_vals * chi_Y(w_vals)
+    chi = CubicSpline(w_param, z_grid, extrapolate=True)
+    return (1.0 + w_vals) / w_vals * chi(w_vals)
 
 
-# ---------------------------------------------------------------------------
-# psi_inverse
-# ---------------------------------------------------------------------------
-
-def psi_inverse(w_vals, S_vals):
+def psi_inverse(w, S_w):
     """
-    Given S-transform values, compute chi(w) = psi^{-1}(w) and G(chi(w)).
+    Given S-transform values S = (1+w)/w * chi(w)
+    Compute chi(w) = psi^{-1}(w) and G(chi(w)).
 
     Parameters
     ----------
-    w_vals : array_like, shape (m,)
+    w : array_like, shape (m,)
         Points in (-1, 0).
-    S_vals : array_like, shape (m,)
-        S-transform values at w_vals.
+    S_w : array_like, shape (m,)
+        S-transform values at w.
 
     Returns
     -------
     z_vals : ndarray, shape (m,)
         chi(w) = psi^{-1}(w)
     G_vals : ndarray, shape (m,)
-        G(chi(w))
+        Stieltjes transform G(chi(w)).
     """
-    w_vals = np.asarray(w_vals, dtype=float)
-    S_vals = np.asarray(S_vals, dtype=float)
+    if w.ndim != 1 or S_w.ndim != 1:
+        raise ValueError("w and S_w must be 1D arrays.")
+    if len(w) != len(S_w):
+        raise ValueError("w and S_w must have the same length.")
 
-    if w_vals.ndim != 1 or S_vals.ndim != 1:
-        raise ValueError("w_vals and S_vals must be 1D arrays.")
-    if len(w_vals) != len(S_vals):
-        raise ValueError("w_vals and S_vals must have the same length.")
-
-    z_vals = (w_vals / (1.0 + w_vals)) * S_vals
-    G_vals = (1.0 + w_vals) / z_vals
-    return z_vals, G_vals
+    z = (w / (1.0 + w)) * S_w
+    G = (1.0 + w) / z
+    return z, G
 
 
-# ---------------------------------------------------------------------------
-# AAA rational approximation
-# ---------------------------------------------------------------------------
-
-def _aaa(z_vals, G_vals, tol=1e-13, mmax=100):
+def _aaa(z, F, tol=1e-13, mmax=100):
     """
     AAA rational approximation (Nakatsukasa, Sète, Trefethen 2018).
 
@@ -125,10 +115,10 @@ def _aaa(z_vals, G_vals, tol=1e-13, mmax=100):
 
     Parameters
     ----------
-    z_vals : array_like, shape (M,)
+    z : array_like, shape (M,)
         Sample points (real).
-    G_vals : array_like, shape (M,)
-        Function values at z_vals (real).
+    F : array_like, shape (M,)
+        Function values at z (real).
     tol : float
         Convergence tolerance on the relative sup-norm residual.
     mmax : int
@@ -143,16 +133,14 @@ def _aaa(z_vals, G_vals, tol=1e-13, mmax=100):
     wj : ndarray
         Barycentric weights.
     """
-    z = np.asarray(z_vals, dtype=float)
-    F = np.asarray(G_vals, dtype=float)
     M = len(z)
-    F_scale = np.max(np.abs(F)) or 1.0
-
-    # Pre-allocate the full Cauchy matrix; fill one column per iteration.
+    F_scale = np.max(np.abs(F))
     n_iters = min(mmax, M - 1)
+
+    # Cauchy matrix; fill one column per iteration.
     C = np.empty((M, n_iters), dtype=float)
 
-    mask = np.ones(M, dtype=bool)   # True = non-support point
+    mask = np.ones(M, dtype=bool)
     zj_list, fj_list = [], []
     R = np.full(M, np.mean(F))
     wj = None
@@ -278,7 +266,7 @@ def _aaa_poles_residues(zj, fj, wj):
 # Eigenvalue recovery from Green's function data
 # ---------------------------------------------------------------------------
 
-def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13, imag_tol=1e-6):
+def eigenvalues_from_G(z, G, k, tol=1e-13, imag_tol=1e-6):
     """
     Recover k eigenvalues of mu^A from (z, G) data on the negative real axis.
 
@@ -292,10 +280,10 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13, imag_tol=1e-6):
 
     Parameters
     ----------
-    z_vals : array_like, shape (M,)
+    z : array_like, shape (M,)
         Negative real z-values (from psi_inverse). More points give a better
         fit; M >> k is recommended.
-    G_vals : array_like, shape (M,)
+    G : array_like, shape (M,)
         Corresponding G^A(z)-values.
     k : int
         Number of eigenvalues to return (largest k retained after filtering).
@@ -313,9 +301,6 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13, imag_tol=1e-6):
         Corrected eigenvalues, sorted descending. Fewer than k may be returned
         if fewer than k poles survive Stieltjes filtering.
     """
-    z = np.asarray(z_vals, dtype=float)
-    G = np.asarray(G_vals, dtype=float)
-
     zj, fj, wj = _aaa(z, G, tol=tol)
     if wj is None or len(zj) == 0:
         raise RuntimeError("AAA produced no support points.")
@@ -328,7 +313,7 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13, imag_tol=1e-6):
     # axis, which is negligible when lambda >> max|z|.  Any pole found there
     # is a spurious artefact of the rational approximation and cannot be
     # resolved from data on [-max|z|, 0).
-    max_z = np.max(np.abs(z_vals))
+    max_z = np.max(np.abs(z))
     valid = (
         np.isfinite(residues)
         & (np.abs(poles.imag)    < imag_tol * (np.abs(poles.real)    + 1e-30))
@@ -352,22 +337,16 @@ def eigenvalues_from_G(z_vals, G_vals, k, tol=1e-13, imag_tol=1e-6):
     return candidates[:k]
 
 
-# ---------------------------------------------------------------------------
-# S_inverse
-# ---------------------------------------------------------------------------
-
-def S_inverse(w_vals, S_vals, k, imag_tol=1e-6):
+def S_inverse(w, S_w, k, imag_tol=1e-6):
     """
     Recover k corrected eigenvalues from S-transform values.
-    For best results, pass a fine, uniform w-grid in (-1, 0) with
-    many more than 2*k points.
 
     Parameters
     ----------
-    w_vals : array_like, shape (m,)
+    w : array_like, shape (m,)
         Points in (-1, 0)
-    S_vals : array_like, shape (m,)
-        S-transform values at w_vals.
+    S_w : array_like, shape (m,)
+        S-transform values at w.
     k : int
         Number of eigenvalues to recover.
     imag_tol : float
@@ -379,12 +358,10 @@ def S_inverse(w_vals, S_vals, k, imag_tol=1e-6):
         Corrected eigenvalues, sorted descending. Fewer than k may be returned
         if fewer than k poles survive Stieltjes filtering in eigenvalues_from_G.
     """
-    z_vals, G_vals = psi_inverse(w_vals, S_vals)
-    finite = (
-        np.isfinite(z_vals) & np.isfinite(G_vals)
-        & (z_vals < 0) & (G_vals < 0)
-    )
-    eigenvalues = eigenvalues_from_G(z_vals[finite], G_vals[finite], k, imag_tol=imag_tol)
+    z, G = psi_inverse(w, S_w)
+    finite = np.isfinite(z) & np.isfinite(G)
+
+    eigenvalues = eigenvalues_from_G(z[finite], G[finite], k, imag_tol=imag_tol)
     if len(eigenvalues) < k:
         warnings.warn(
             f"Only {len(eigenvalues)} of {k} requested eigenvalues were recovered.",
