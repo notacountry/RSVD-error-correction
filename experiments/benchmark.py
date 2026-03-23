@@ -9,7 +9,7 @@ import numpy as np
 from rsvd_correction.rsvd import rsvd
 
 
-def run_benchmark(name, A, sigma_true, k, p, seed=None, verbose=True):
+def run_benchmark(name, A, sigma_true, k, p, seed=None):
     """
     Run plain and corrected RSVD on A and return a comparison result.
 
@@ -27,8 +27,6 @@ def run_benchmark(name, A, sigma_true, k, p, seed=None, verbose=True):
         Oversampling parameter passed to rsvd.
     seed : int or None
         Random seed passed to rsvd.
-    verbose : bool, default True
-        If True, print the comparison table.
 
     Returns
     -------
@@ -43,9 +41,11 @@ def run_benchmark(name, A, sigma_true, k, p, seed=None, verbose=True):
     rsvd_rmse = np.sqrt(np.mean((sigma_rsvd - sigma_true) ** 2))
     corr_rmse = np.sqrt(np.mean((sigma_corr - sigma_true) ** 2))
 
-    if verbose:
-        print(f"=== {name} ===")
-        print(f"RSVD RMSE:      {rsvd_rmse}")
-        print(f"Corrected RMSE: {corr_rmse}")
-
     return {"name": name, "rsvd_rmse": rsvd_rmse, "corr_rmse": corr_rmse}
+
+
+def print_results(result):
+    """Print a formatted summary of a run_benchmark result."""
+    print(f"=== {result['name']} ===")
+    print(f"RSVD RMSE:      {result['rsvd_rmse']}")
+    print(f"Corrected RMSE: {result['corr_rmse']}")
