@@ -2,13 +2,11 @@
 Paired one-sided t-test: does corrected RSVD reduce per-trial MSE?
 H0: E[D] = 0; H1: E[D] < 0
 """
-import warnings
-
 import numpy as np
 from scipy import stats
 
-from rsvd_correction.rsvd import rsvd
 from rsvd_correction.matrix_generators import SignalPlusNoise
+from benchmark import harmonic_signal, rsvd_pair
 
 
 def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
@@ -38,19 +36,13 @@ def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
         if K < 1:
             continue
         actual_c     = N / (K + p)
-        sigma_signal = np.array([10.0 / (i + 1) for i in range(K)])
+        sigma_signal = harmonic_signal(K)
         gen = SignalPlusNoise(sigma_signal=sigma_signal, noise_level=noise)
 
         D = []
         for seed in range(n_trials):
             A, _ = gen(n=N, k=K, seed=seed)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                try:
-                    _, s_plain, _ = rsvd(A, k=K, p=p, seed=seed)
-                    _, s_corr,  _ = rsvd(A, k=K, p=p, seed=seed, correction=True)
-                except Exception:
-                    continue
+            s_plain, s_corr = rsvd_pair(A, k=K, p=p, seed=seed)
 
             mse_rsvd = np.mean((s_plain - sigma_signal) ** 2)
             mse_corr = np.mean((s_corr  - sigma_signal) ** 2)

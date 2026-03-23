@@ -6,13 +6,12 @@ For each (N, c) pair we derive K = round(N/c) - P and measure the error
 on the top k_signal singular values over N_SEEDS random seeds.
 Ratio < 1 means the correction helps relative to plain RSVD.
 """
-import warnings
 from itertools import product
 
 import numpy as np
 
-from rsvd_correction.rsvd import rsvd
 from rsvd_correction.matrix_generators import SignalPlusNoise
+from benchmark import harmonic_signal, rsvd_pair
 
 
 P            = 10
@@ -38,21 +37,14 @@ def run_parameter_sweep():
             continue
 
         actual_c     = N / (K + P)
-        sigma_signal = np.array([10.0 / (i + 1) for i in range(K)])
+        sigma_signal = harmonic_signal(K)
         gen = SignalPlusNoise(sigma_signal=sigma_signal, noise_level=noise)
 
         rsvd_errs, corr_errs = [], []
 
         for seed in range(N_SEEDS):
             A, _ = gen(n=N, k=K, seed=seed)
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                try:
-                    _, s_plain, _ = rsvd(A, k=K, p=P, seed=seed)
-                    _, s_corr,  _ = rsvd(A, k=K, p=P, seed=seed, correction=True)
-                except Exception as e:
-                    print(f"  [skip noise={noise} N={N} K={K} seed={seed}: {e}]")
-                    continue
+            s_plain, s_corr = rsvd_pair(A, k=K, p=P, seed=seed)
 
             rsvd_errs.append(np.linalg.norm(s_plain - sigma_signal))
             corr_errs.append(np.linalg.norm(s_corr  - sigma_signal))

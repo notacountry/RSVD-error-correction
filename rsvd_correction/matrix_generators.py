@@ -38,6 +38,13 @@ def _random_orthonormal(n, k, rng):
     return Q
 
 
+def _random_svd_matrix(sigma, n, rng):
+    """Return U @ diag(sigma) @ V.T with random orthonormal U, V."""
+    U = _random_orthonormal(n, len(sigma), rng)
+    V = _random_orthonormal(n, len(sigma), rng)
+    return U @ np.diag(sigma) @ V.T
+
+
 class ExactLowRank(MatrixGenerator):
     """
     A = U diag(sigma) Vt, exactly rank k.
@@ -55,10 +62,7 @@ class ExactLowRank(MatrixGenerator):
 
     def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
         rng = np.random.default_rng(seed)
-        U = _random_orthonormal(n, k, rng)
-        V = _random_orthonormal(n, k, rng)
-        A = U @ np.diag(self.sigma) @ V.T
-        return A, np.sort(self.sigma)[::-1]
+        return _random_svd_matrix(self.sigma, n, rng), np.sort(self.sigma)[::-1]
 
 
 class DiagonalKnownSpectrum(MatrixGenerator):
@@ -100,10 +104,7 @@ class PolynomialDecay(MatrixGenerator):
     def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
         rng = np.random.default_rng(seed)
         sigma = 1.0 / np.arange(1, n + 1) ** self.alpha
-        U = _random_orthonormal(n, n, rng)
-        V = _random_orthonormal(n, n, rng)
-        A = U @ np.diag(sigma) @ V.T
-        return A, sigma[:k]
+        return _random_svd_matrix(sigma, n, rng), sigma[:k]
 
 
 class ExponentialDecay(MatrixGenerator):
@@ -124,10 +125,7 @@ class ExponentialDecay(MatrixGenerator):
     def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
         rng = np.random.default_rng(seed)
         sigma = np.exp(-self.beta * np.arange(n))
-        U = _random_orthonormal(n, n, rng)
-        V = _random_orthonormal(n, n, rng)
-        A = U @ np.diag(sigma) @ V.T
-        return A, sigma[:k]
+        return _random_svd_matrix(sigma, n, rng), sigma[:k]
 
 
 class SignalPlusNoise(MatrixGenerator):
@@ -151,9 +149,6 @@ class SignalPlusNoise(MatrixGenerator):
 
     def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
         rng = np.random.default_rng(seed)
-        U = _random_orthonormal(n, k, rng)
-        V = _random_orthonormal(n, k, rng)
-        signal = U @ np.diag(self.sigma_signal) @ V.T
+        signal = _random_svd_matrix(self.sigma_signal, n, rng)
         noise = (self.noise_level / np.sqrt(n)) * rng.standard_normal((n, n))
-        A = signal + noise
-        return A, np.sort(self.sigma_signal)[::-1]
+        return signal + noise, np.sort(self.sigma_signal)[::-1]

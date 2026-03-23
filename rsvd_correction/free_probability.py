@@ -14,8 +14,14 @@ from scipy.linalg import eig as scipy_eig
 from scipy.interpolate import CubicSpline
 
 
-_DOMAIN = 0.95
-_GRANULARITY = 500
+_DOMAIN            = 0.95
+_GRANULARITY       = 500
+_Z_GRID_SIZE       = 2000
+_AAA_TOL           = 1e-13
+_IMAG_TOL          = 1e-6
+_EPSILON           = 1e-10
+_REG_EPS           = 1e-30
+_RESIDUE_THRESHOLD = 0.1
 
 
 def stieltjes_transform(z, eigenvalues):
@@ -60,13 +66,13 @@ def S_transform(eigenvalues, w_vals):
 
     # Log-spaced z-grid on the negative real axis.
     # Dense near z = 0; sparse near boundary (psi_Y ~ 0, S_Y ~ const).
-    z_grid = -np.geomspace(eigs_pos.mean() * 1e-4, eigs_pos.max() * 1e4, 2000)
+    z_grid = -np.geomspace(eigs_pos.mean() * 1e-4, eigs_pos.max() * 1e4, _Z_GRID_SIZE)
 
     alpha   = (n_total - n_pos) / n_total
     w_param = (alpha - 1.0) + (n_pos / n_total) * z_grid * stieltjes_transform(z_grid, eigs_pos)
 
     # Ensure w in (-1, 0)
-    valid = w_param < -1e-12
+    valid = w_param < -_EPSILON
     w_param, z_grid = w_param[valid], z_grid[valid]
 
     if len(w_param) < 2:
@@ -107,7 +113,7 @@ def psi_inverse(w, S_w):
     return z, G
 
 
-def _aaa(z, F, tol=1e-13, mmax=100):
+def _aaa(z, F, tol=_AAA_TOL, mmax=100):
     """
     AAA rational approximation (Nakatsukasa, Sète, Trefethen 2018).
 
@@ -245,8 +251,8 @@ def _aaa_poles_residues(zj, fj, wj):
     # Discard eigenvalues that coincide with a support point (spurious roots
     # of the companion pencil that are not true poles of D).
     dist_to_support = np.min(np.abs(poles[:, None] - zj[None, :]), axis=1)
-    scale = np.abs(poles) + np.abs(zj).mean() + 1e-30
-    poles = poles[dist_to_support > 1e-10 * scale]
+    scale = np.abs(poles) + np.abs(zj).mean() + _REG_EPS
+    poles = poles[dist_to_support > _EPSILON * scale]
 
     if len(poles) == 0:
         return np.array([]), np.array([])
@@ -257,7 +263,7 @@ def _aaa_poles_residues(zj, fj, wj):
     #
     # Vectorised over all poles simultaneously: d[i, k] = poles[i] - zj[k]
     d = poles[:, None] - zj[None, :]                    # (n_poles, m)
-    near = np.min(np.abs(d), axis=1) < 1e-14           # mask near-coincident poles
+    near = np.min(np.abs(d), axis=1) < _EPSILON         # mask near-coincident poles
     N_vals  =  (wj * fj / d).sum(axis=1)
     Dp_vals = -(wj / d**2).sum(axis=1)
     residues = np.where(near, np.nan + 0j, N_vals / Dp_vals)
@@ -269,7 +275,7 @@ def _aaa_poles_residues(zj, fj, wj):
 # Eigenvalue recovery from Green's function data
 # ---------------------------------------------------------------------------
 
-def eigenvalues_from_greens_function(z, G, k, tol=1e-13, imag_tol=1e-6):
+def eigenvalues_from_greens_function(z, G, k, tol=_AAA_TOL, imag_tol=_IMAG_TOL):
     """
     Recover k eigenvalues of mu^A from (z, G) data on the negative real axis.
 
@@ -294,7 +300,7 @@ def eigenvalues_from_greens_function(z, G, k, tol=1e-13, imag_tol=1e-6):
         AAA convergence tolerance on the relative sup-norm residual.
     imag_tol : float
         Relative imaginary tolerance for filtering spurious complex poles.
-        Poles with |Im(pole)| / (|Re(pole)| + 1e-30) > imag_tol are discarded.
+        Poles with |Im(pole)| / (|Re(pole)| + _REG_EPS) > imag_tol are discarded.
         Tighter values risk dropping nearly-real poles; looser values risk
         accepting complex noise. Default: 1e-6.
 
@@ -319,8 +325,8 @@ def eigenvalues_from_greens_function(z, G, k, tol=1e-13, imag_tol=1e-6):
     max_z = np.max(np.abs(z))
     valid = (
         np.isfinite(residues)
-        & (np.abs(poles.imag)    < imag_tol * (np.abs(poles.real)    + 1e-30))
-        & (np.abs(residues.imag) < imag_tol * (np.abs(residues.real) + 1e-30))
+        & (np.abs(poles.imag)    < imag_tol * (np.abs(poles.real)    + _REG_EPS))
+        & (np.abs(residues.imag) < imag_tol * (np.abs(residues.real) + _REG_EPS))
         & (poles.real    > 0)
         & (poles.real    < max_z)
         & (residues.real > 0)
@@ -334,13 +340,13 @@ def eigenvalues_from_greens_function(z, G, k, tol=1e-13, imag_tol=1e-6):
     # real eigenvalue and is discarded.
     if valid.any():
         mean_res = residues[valid].real.mean()
-        valid &= (residues.real >= 0.1 * mean_res)
+        valid &= (residues.real >= _RESIDUE_THRESHOLD * mean_res)
 
     candidates = np.sort(poles[valid].real)[::-1]
     return candidates[:k]
 
 
-def S_inverse(w, S_w, k, imag_tol=1e-6):
+def S_inverse(w, S_w, k, imag_tol=_IMAG_TOL):
     """
     Recover k corrected eigenvalues from S-transform values.
 

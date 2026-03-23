@@ -35,13 +35,30 @@ def run_benchmark(name, A, sigma_true, k, p, seed=None):
         "rsvd_rmse" : float — RMSE of plain RSVD against sigma_true
         "corr_rmse" : float — RMSE of corrected RSVD against sigma_true
     """
-    _, sigma_rsvd, _ = rsvd(A, k=k, p=p, seed=seed)
-    _, sigma_corr, _ = rsvd(A, k=k, p=p, seed=seed, correction=True)
+    sigma_rsvd, sigma_corr = rsvd_pair(A, k=k, p=p, seed=seed)
 
     rsvd_rmse = np.sqrt(np.mean((sigma_rsvd - sigma_true) ** 2))
     corr_rmse = np.sqrt(np.mean((sigma_corr - sigma_true) ** 2))
 
     return {"name": name, "rsvd_rmse": rsvd_rmse, "corr_rmse": corr_rmse}
+
+
+def rsvd_pair(A, k, p, seed):
+    """
+    Run plain and corrected RSVD.
+
+    Returns
+    -------
+    s_plain, s_corr : ndarray
+    """
+    _, s_plain, _ = rsvd(A, k=k, p=p, seed=seed)
+    _, s_corr,  _ = rsvd(A, k=k, p=p, seed=seed, correction=True)
+    return s_plain, s_corr
+
+
+def harmonic_signal(k, amplitude=10.0):
+    """Return amplitude / i for i = 1, ..., k."""
+    return amplitude / np.arange(1, k + 1)
 
 
 def print_results(result):
