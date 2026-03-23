@@ -34,7 +34,7 @@ def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
         Significance level.
     """
     header = (
-        f"{'N':>6} {'K':>5} {'c':>5} {'noise':>6} {'n':>5} | "
+        f"{'N':>6} {'K':>5} {'c':>5} {'noise':>6} | "
         f"{'D_bar':>10} {'s_D':>10} {'t':>8} {'p':>8} | "
         f"{'CI (-inf, hi)':>20} | {'reject?':>7}"
     )
@@ -82,7 +82,7 @@ def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
         reject = "YES" if p_val < alpha else "no"
 
         print(
-            f"{N:>6} {K:>5} {actual_c:>5.2f} {noise:>6.1f} {n:>5} | "
+            f"{N:>6} {K:>5} {actual_c:>5.2f} {noise:>6.1f} | "
             f"{D_bar:>10.4f} {s_D:>10.4f} {t_obs:>8.3f} {p_val:>8.4f} | "
             f"(-inf, {ci_hi:>8.4f}) | {reject:>7}"
         )
