@@ -1,16 +1,17 @@
 """
 Test matrix generators for RSVD eigenvalue correction experiments.
 """
-from typing import Protocol
+from abc import ABC, abstractmethod
 
 import numpy as np
 
 
-class MatrixGenerator(Protocol):
+class MatrixGenerator(ABC):
     """Callable that produces a random matrix and its true top-k singular values."""
 
     name: str
 
+    @abstractmethod
     def __call__(
         self, n: int, k: int, seed: int | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -29,7 +30,6 @@ class MatrixGenerator(Protocol):
         sigma_true : (k,) ndarray
             Top-k exact singular values.
         """
-        ...
 
 
 def _random_orthonormal(n, k, rng):
@@ -38,7 +38,7 @@ def _random_orthonormal(n, k, rng):
     return Q
 
 
-class ExactLowRank:
+class ExactLowRank(MatrixGenerator):
     """
     A = U diag(sigma) Vt, exactly rank k.
 
@@ -61,7 +61,7 @@ class ExactLowRank:
         return A, np.sort(self.sigma)[::-1]
 
 
-class DiagonalKnownSpectrum:
+class DiagonalKnownSpectrum(MatrixGenerator):
     """
     A = diag(sigma_1, ..., sigma_k, 0, ..., 0).
 
@@ -82,7 +82,7 @@ class DiagonalKnownSpectrum:
         return np.diag(d), d[:k]
 
 
-class PolynomialDecay:
+class PolynomialDecay(MatrixGenerator):
     """
     Singular values sigma_i = i^{-alpha}, i = 1, ..., n.
 
@@ -106,7 +106,7 @@ class PolynomialDecay:
         return A, sigma[:k]
 
 
-class ExponentialDecay:
+class ExponentialDecay(MatrixGenerator):
     """
     Singular values sigma_i = exp(-beta * i), i = 0, ..., n-1.
 
@@ -130,7 +130,7 @@ class ExponentialDecay:
         return A, sigma[:k]
 
 
-class SignalPlusNoise:
+class SignalPlusNoise(MatrixGenerator):
     """
     A = U diag(sigma_signal) Vt + (noise_level / sqrt(n)) * G,
     G ~ N(0,1)^{n x n}.
