@@ -270,10 +270,6 @@ def _aaa_poles_residues(zj, fj, wj):
     return poles, residues
 
 
-# ---------------------------------------------------------------------------
-# Eigenvalue recovery from Green's function data
-# ---------------------------------------------------------------------------
-
 def eigenvalues_from_greens_function(z, G, k, tol=_AAA_TOL, imag_tol=_IMAG_TOL):
     """
     Recover k eigenvalues of mu^A from (z, G) data on the negative real axis.
