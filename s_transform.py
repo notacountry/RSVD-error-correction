@@ -7,19 +7,6 @@ Assumptions
 1. Eigenvalues are non-negative.
 2. The input is a probability measure.
 3. w lies in (-1, 0).
-
-Implementation note
--------------------
-S_transform uses a *parametric* approach instead of Newton iteration.
-Rather than solving psi_Y(z) = w for a fixed w (Newton, up to max_iter steps per point),
-we choose z freely and evaluate
-
-    w(z) = z * m_Y(z) - 1          (= psi_Y(z), direct formula)
-    S_Y(z) = (1 + w(z)) / (w(z) * z)
-
-across a log-spaced z-grid on the negative real axis, yielding the parametric
-curve (w_param, S_param) in one vectorised call.  Evaluation at requested
-w_vals is then a plain 1-D interpolation.
 """
 import warnings
 
@@ -28,123 +15,64 @@ from scipy.linalg import eig as scipy_eig
 from scipy.interpolate import CubicSpline
 
 
-# ---------------------------------------------------------------------------
-# Stieltjes transform
-# ---------------------------------------------------------------------------
-
 def stieltjes_transform(z, eigenvalues):
     """
     Empirical Stieltjes transform.
 
     Parameters
     ----------
-    z : array_like of complex, shape (M,)
-    eigenvalues : array_like of real, shape (n,)
+    z : array_like, shape (M,)
+    eigenvalues : array_like, shape (n,)
 
     Returns
     -------
-    ndarray of complex, shape (M,)
+    ndarray, shape (M,)
     """
-    z = np.asarray(z, dtype=complex)
-    eigenvalues = np.asarray(eigenvalues, dtype=float)
     return np.mean(1.0 / (z[..., None] - eigenvalues), axis=-1)
-
-
-# ---------------------------------------------------------------------------
-# S-transform  (parametric — no Newton)
-# ---------------------------------------------------------------------------
+ 
 
 def S_transform(eigenvalues, w_vals):
     """
     Compute S-transform of the ESM of a matrix with given eigenvalues.
 
-    Returns the standard S-transform:
-
-        S(w) = (1 + w) / w * chi(w)
-
-    where chi(w) = psi^{-1}(w) and psi(z) = z * m(z) - 1.
-
     Parameters
     ----------
     eigenvalues : array_like of real, shape (n,)
-        Eigenvalues defining the empirical spectral measure.
+        Eigenvalues defining the ESM.
     w_vals : array_like of real
-        Points where S(w) is evaluated.  Should lie in (-1, 0).
+        Points where S(w) is evaluated.
 
     Returns
     -------
     S_vals : ndarray of float, shape (len(w_vals),)
-
-    Notes
-    -----
-    Implementation uses a parametric z-grid approach (no Newton iteration):
-
-        z  chosen on the negative real axis
-        m_Y(z) = stieltjes_transform(z, eigenvalues)   [one vectorised call]
-        w(z)   = z * m_Y(z) - 1                        [= psi_Y(z), direct]
-        S_Y(z) = (1 + w(z)) / w(z) * z                 [standard S-transform]
-
-    The resulting parametric cloud (w_param, S_param) is then interpolated
-    via CubicSpline on chi_Y(w) = z to supply S at the requested w_vals.
+        S-transform values at w_vals.
     """
-    eigenvalues = np.asarray(eigenvalues, dtype=float)
-    w_vals = np.asarray(w_vals, dtype=float)
-
     if len(w_vals) == 0:
         return np.array([], dtype=float)
 
     eigs_pos = eigenvalues[eigenvalues > 0]
-    if len(eigs_pos) == 0:
+    n_total, n_pos = len(eigenvalues), len(eigs_pos)
+    if len(n_pos) == 0:
         return np.full(len(w_vals), np.nan, dtype=float)
-
-    lam_max  = eigs_pos.max()
-    lam_mean = eigs_pos.mean()
 
     # Log-spaced z-grid on the negative real axis.
-    # Dense near z = 0 (signal poles cause sharp features in psi_Y there);
-    # sparse far out (psi_Y ≈ 0, S_Y ≈ const).
-    z_grid = -np.geomspace(lam_mean * 1e-4, lam_max * 1e4, 2000)
+    # Dense near z = 0; sparse near boundary (psi_Y ~ 0, S_Y ~ const).
+    z_grid = -np.geomspace(eigs_pos.mean() * 1e-4, eigs_pos.max() * 1e4, 2000)
 
-    # Parametric evaluation — separate the atom at 0 analytically.
-    # Including zero eigenvalues in stieltjes_transform produces 1/z terms of
-    # magnitude ~1e4 at small |z|.  The product z*(1/z) recovers alpha exactly,
-    # but the subtraction z*m_Y - 1 ≈ -(r/n) + O(z) then loses ~13 digits to
-    # cancellation.  Instead, write m_Y(z) = alpha/z + (n_pos/n)*m_pos(z) and
-    # compute w = z*m_Y - 1 = (alpha-1) + (n_pos/n)*z*m_pos(z) directly.
-    n_total  = len(eigenvalues)
-    n_pos    = len(eigs_pos)
-    alpha    = (n_total - n_pos) / n_total          # exact mass at 0
-    m_pos    = stieltjes_transform(z_grid, eigs_pos).real
-    w_param  = (alpha - 1.0) + (n_pos / n_total) * z_grid * m_pos  # psi_Y(z)
+    alpha   = (n_total - n_pos) / n_total
+    w_param = (alpha - 1.0) + (n_pos / n_total) * z_grid * stieltjes_transform(z_grid, eigs_pos)
 
-    # Retain only well-posed points: w ∈ (-1, 0), z finite and negative.
-    valid = (
-        (w_param > -1.0) & (w_param < -1e-12)
-        & np.isfinite(w_param) & np.isfinite(z_grid)
-    )
-    w_p = w_param[valid]
-    z_p = z_grid[valid]
+    # Ensure w in (-1, 0)
+    valid = w_param < -1e-12
+    w_param, z_grid = w_param[valid], z_grid[valid]
 
-    if len(w_p) < 2:
+    if len(w_param) < 2:
         return np.full(len(w_vals), np.nan, dtype=float)
 
-    # Sort by w (w_param is monotone, but direction depends on z_grid ordering).
-    order = np.argsort(w_p)
-    w_p   = w_p[order]
-    z_p   = z_p[order]
-
-    # Interpolate chi_Y(w) = z (the inverse of psi_Y) rather than S_Y(w).
-    #
-    # S_Y(w) = (1+w)/w * z varies over ~7 orders of magnitude in the
-    # typical w-range, making any polynomial interpolation ill-conditioned —
-    # cubic spline on S produces oscillations that inflate the AAA degree.
-    # chi_Y(w) = z is smooth, bounded, and monotone on the entire domain,
-    # so CubicSpline on z is accurate with the same knot density.
-    # Once we have chi_Y at the requested w_vals, S_Y follows directly.
-    cs_z   = CubicSpline(w_p, z_p, extrapolate=True)
-    z_at_w = cs_z(w_vals)
-    S_out  = (1.0 + w_vals) / w_vals * z_at_w
-    return S_out
+    # Find chi_Y s.t. chi_Y(w) = z, then S_Y(w) = (1 + w) / w * chi_Y(w).
+    # chi_Y(w) = z is smooth and monotone on the entire domain, unlike S.
+    chi_Y  = CubicSpline(w_param, z_grid, extrapolate=True)
+    return (1.0 + w_vals) / w_vals * chi_Y(w_vals)
 
 
 # ---------------------------------------------------------------------------
