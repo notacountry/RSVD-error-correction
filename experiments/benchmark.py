@@ -1,22 +1,22 @@
 """
 Benchmark utilities for RSVD eigenvalue correction.
 
-Separates evaluation logic from test matrix generation so that test_matrices.py
+Separates evaluation logic from matrix generation so that matrix_generators.py
 remains a pure data-generation module.
 """
 import numpy as np
 
-from rsvd import rsvd
+from rsvd_correction.rsvd import rsvd
 
 
-def run_test(name, A, sigma_true, k, p, seed=None, verbose=True):
+def run_benchmark(name, A, sigma_true, k, p, seed=None, verbose=True):
     """
     Run plain and corrected RSVD on A and return a comparison result.
 
     Parameters
     ----------
     name : str
-        Label for this test case.
+        Label for this benchmark case.
     A : ndarray
         Input matrix.
     sigma_true : ndarray, shape (k,)
@@ -33,7 +33,7 @@ def run_test(name, A, sigma_true, k, p, seed=None, verbose=True):
     Returns
     -------
     result : dict with keys:
-        "name"      : str   — the test label
+        "name"      : str   — the benchmark label
         "rsvd_rmse" : float — RMSE of plain RSVD against sigma_true
         "corr_rmse" : float — RMSE of corrected RSVD against sigma_true
     """

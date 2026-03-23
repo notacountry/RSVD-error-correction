@@ -1,22 +1,14 @@
 """
-Paired one-sided t-test: does the S-transform correction reduce per-trial MSE?
-
-H0: E[D] = 0   (correction has no effect on MSE)
-H1: E[D] < 0   (correction reduces MSE)
-
-    t = D_bar / sqrt(s_D^2 / n)  ~  t_{n-1}  under H0
-    p = P(T_{n-1} <= t_obs)
-    CI: D_bar +/- t_{n-1, 1-alpha} * s_D / sqrt(n)
-
-Reject H0 when p < alpha = 0.05.
+Paired one-sided t-test: does corrected RSVD reduce per-trial MSE?
+H0: E[D] = 0; H1: E[D] < 0
 """
 import warnings
 
 import numpy as np
 from scipy import stats
 
-from rsvd import rsvd
-from test_matrices import signal_plus_noise
+from rsvd_correction.rsvd import rsvd
+from rsvd_correction.matrix_generators import signal_plus_noise
 
 
 def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):

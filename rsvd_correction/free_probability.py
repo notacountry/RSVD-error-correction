@@ -1,18 +1,21 @@
 """
-S-transform computation for RSVD eigenvalue correction via free multiplicative
+Free probability tools for RSVD eigenvalue correction via S-transform
 deconvolution.
 
 Assumptions
 -----------
 1. Eigenvalues are non-negative.
-2. The input is a probability measure.
-3. w lies in (-1, 0).
+2. w lies in (-1, 0).
 """
 import warnings
 
 import numpy as np
 from scipy.linalg import eig as scipy_eig
 from scipy.interpolate import CubicSpline
+
+
+_DOMAIN = 0.95
+_GRANULARITY = 500
 
 
 def stieltjes_transform(z, eigenvalues):
@@ -29,7 +32,7 @@ def stieltjes_transform(z, eigenvalues):
     ndarray, shape (M,)
     """
     return np.mean(1.0 / (z[..., None] - eigenvalues), axis=-1)
- 
+
 
 def S_transform(eigenvalues, w_vals):
     """
@@ -52,7 +55,7 @@ def S_transform(eigenvalues, w_vals):
 
     eigs_pos = eigenvalues[eigenvalues > 0]
     n_total, n_pos = len(eigenvalues), len(eigs_pos)
-    if len(n_pos) == 0:
+    if n_pos == 0:
         return np.full(len(w_vals), np.nan, dtype=float)
 
     # Log-spaced z-grid on the negative real axis.
@@ -266,7 +269,7 @@ def _aaa_poles_residues(zj, fj, wj):
 # Eigenvalue recovery from Green's function data
 # ---------------------------------------------------------------------------
 
-def eigenvalues_from_G(z, G, k, tol=1e-13, imag_tol=1e-6):
+def eigenvalues_from_greens_function(z, G, k, tol=1e-13, imag_tol=1e-6):
     """
     Recover k eigenvalues of mu^A from (z, G) data on the negative real axis.
 
@@ -350,18 +353,19 @@ def S_inverse(w, S_w, k, imag_tol=1e-6):
     k : int
         Number of eigenvalues to recover.
     imag_tol : float
-        Passed through to eigenvalues_from_G. See that function's docstring.
+        Passed through to eigenvalues_from_greens_function. See that
+        function's docstring.
 
     Returns
     -------
     eigenvalues : ndarray, shape (<= k,)
         Corrected eigenvalues, sorted descending. Fewer than k may be returned
-        if fewer than k poles survive Stieltjes filtering in eigenvalues_from_G.
+        if fewer than k poles survive Stieltjes filtering.
     """
     z, G = psi_inverse(w, S_w)
     finite = np.isfinite(z) & np.isfinite(G)
 
-    eigenvalues = eigenvalues_from_G(z[finite], G[finite], k, imag_tol=imag_tol)
+    eigenvalues = eigenvalues_from_greens_function(z[finite], G[finite], k, imag_tol=imag_tol)
     if len(eigenvalues) < k:
         warnings.warn(
             f"Only {len(eigenvalues)} of {k} requested eigenvalues were recovered.",
@@ -370,3 +374,62 @@ def S_inverse(w, S_w, k, imag_tol=1e-6):
         )
 
     return eigenvalues
+
+
+def correct_singular_values(Y, m, n, l, k, Sigma):
+    """
+    Apply Marchenko-Pastur S-transform deconvolution to correct RSVD singular
+    values.
+
+    Computes the empirical spectral measure of the sketch Y, deconvolves the
+    Marchenko-Pastur noise contribution via the S-transform, and replaces
+    entries of Sigma with the corrected values wherever the correction reduces
+    the singular value (as the deconvolution should always do).
+
+    Parameters
+    ----------
+    Y : (m, l) ndarray
+        Sketch matrix A @ Omega from the RSVD step.
+    m : int
+        Number of rows of the original matrix A.
+    n : int
+        Number of columns of the original matrix A.
+    l : int
+        Sketch size (= k + p).
+    k : int
+        Target rank; number of singular values to correct.
+    Sigma : (k,) ndarray
+        RSVD singular values, modified in-place where corrections are accepted.
+
+    Returns
+    -------
+    Sigma : (k,) ndarray
+        The (possibly corrected) singular values.
+    """
+    c = n / l
+
+    # Use the (l x l) matrix Y^T Y instead of (m x m) Y Y^T;
+    # they share the same nonzero eigenvalues.
+    eigs_pos = np.linalg.eigvalsh(Y.T @ Y) / l
+
+    # Pad eigenvalues of Y^T Y with m - l zeros
+    # to represent the full m-dimensional ESM.
+    eigs_Y = np.concatenate([eigs_pos, np.zeros(max(0, m - l))])
+
+    # The psi_Y-transform maps the negative real axis onto (bound, 0), so
+    # the S-transform is only well-defined for w in that interval.
+    # Stay _DOMAIN% inside the boundary to avoid numerical issues at the edges.
+    bound = -np.sum(eigs_pos > 0.0) / m
+    w = np.linspace(bound * _DOMAIN, bound * (1 - _DOMAIN), _GRANULARITY)
+
+    S_Y = S_transform(eigs_Y, w)
+    S_A = S_Y * (1.0 + c * w)
+    sigma_corr = np.sqrt(S_inverse(w, S_A, k))
+
+    # The deconvolution should always reduce singular values.
+    # Reject singular values that were not reduced.
+    n_rec = len(sigma_corr)
+    accept = sigma_corr <= Sigma[:n_rec]
+    Sigma[:n_rec][accept] = sigma_corr[accept]
+
+    return Sigma

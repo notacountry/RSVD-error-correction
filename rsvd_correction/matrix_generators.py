@@ -1,5 +1,5 @@
 """
-Test matrices for RSVD eigenvalue correction.
+Test matrix generators for RSVD eigenvalue correction experiments.
 """
 import numpy as np
 
@@ -120,13 +120,13 @@ def exponential_decay(n, k, beta=0.5, seed=None):
     V = _random_orthonormal(n, n, rng)
     A = U @ np.diag(sigma) @ V.T
     return A, sigma[:k]
- 
+
 
 def signal_plus_noise(n, k, sigma_signal, noise_level=1.0, seed=None):
     """
     A = U diag(sigma_signal) Vt + (noise_level / sqrt(n)) * G,
-    G ~ N(0,1)^{n x n}. 
-    
+    G ~ N(0,1)^{n x n}.
+
     Parameters
     ----------
     n : int

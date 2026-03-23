@@ -1,30 +1,29 @@
 """
-Sweep N and c = n/l over the spiked (signal+noise) model, comparing:
-  - plain RSVD
-  - RSVD + S-transform correction
+Sweep N and c = n/l over the spiked signal-plus-noise model, comparing
+plain RSVD with the corrected RSVD.
 
 For each (N, c) pair we derive K = round(N/c) - P and measure the error
 on the top k_signal singular values over N_SEEDS random seeds.
 Ratio < 1 means the correction helps relative to plain RSVD.
 """
 import warnings
+from itertools import product
 
 import numpy as np
 
-from rsvd import rsvd
-from test_matrices import signal_plus_noise
+from rsvd_correction.rsvd import rsvd
+from rsvd_correction.matrix_generators import signal_plus_noise
 
-from itertools import product
 
-P           = 10
-N_SEEDS     = 5
+P            = 10
+N_SEEDS      = 5
 
 NOISE_LEVELS = [0.1, 0.5, 1.0, 2.0, 5.0]
 N_VALS       = [100, 300, 600, 1000]
 C_TARGETS    = [2, 3, 5, 8, 12]
 
 
-def run_sweep():
+def run_parameter_sweep():
     header = (
         f"{'noise':>6} {'N':>6} {'K':>5} {'c':>5} | "
         f"{'RSVD':>9} {'Corrected':>9} | "
@@ -78,4 +77,4 @@ def run_sweep():
 
 
 if __name__ == "__main__":
-    run_sweep()
+    run_parameter_sweep()

@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: rsvd-correction
+Version: 0.1.0
+Summary: Randomized SVD with free-probability-based singular value correction
+Requires-Python: >=3.10
+Requires-Dist: numpy
+Requires-Dist: scipy
