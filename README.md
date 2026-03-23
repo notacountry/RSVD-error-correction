@@ -118,7 +118,7 @@ $$p < 0.05$$
 
 ## Spiked Signal + Noise Model
 
-$$A = U \operatorname{diag}(\sigma_1,\dots,\sigma_k) V^\top + \frac{\sigma_{\text{noise}}}{\sqrt{N}} G$$
+$$A = U \text{diag}(\sigma_1,\dots,\sigma_k) V^\top + \frac{\sigma_{\text{noise}}}{\sqrt{N}} G$$
 
 * $G_{ij} \sim \mathcal{N}(0,1)$
 * Produces structured spectral noise
@@ -143,7 +143,7 @@ Observation:
 | 1000 | 180 | 5.0 | 5.0   | -0.0958 | 0.395 | -2.43  | 0.0085 | -0.030 | Yes    |
 
 **Conclusion:**
-Correction improves top-$k$ singular value recovery under noisy regimes.
+Correction improves top $k$ singular value recovery under noisy regimes.
 
 ---
 
