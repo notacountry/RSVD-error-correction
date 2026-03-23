@@ -1,8 +1,5 @@
 """
 Benchmark utilities for RSVD eigenvalue correction.
-
-Separates evaluation logic from matrix generation so that matrix_generators.py
-remains a pure data-generation module.
 """
 import numpy as np
 

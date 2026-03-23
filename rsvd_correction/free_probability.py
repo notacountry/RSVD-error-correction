@@ -1,6 +1,5 @@
 """
-Free probability tools for RSVD eigenvalue correction via S-transform
-deconvolution.
+Free probability tools for RSVD eigenvalue correction.
 
 Assumptions
 -----------
