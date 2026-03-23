@@ -103,9 +103,18 @@ def S_transform(eigenvalues, w_vals, tol=1e-10, max_iter=100):
     # sparse far out (psi_Y ≈ 0, S_Y ≈ const).
     z_grid = -np.geomspace(lam_mean * 1e-4, lam_max * 1e4, 2000)
 
-    # Parametric evaluation — one vectorised Stieltjes call.
-    m_Y     = stieltjes_transform(z_grid, eigenvalues).real   # real for z < 0
-    w_param = z_grid * m_Y - 1.0                              # psi_Y(z) = w
+    # Parametric evaluation — separate the atom at 0 analytically.
+    # Including zero eigenvalues in stieltjes_transform produces 1/z terms of
+    # magnitude ~1e4 at small |z|.  The product z*(1/z) recovers alpha exactly,
+    # but the subtraction z*m_Y - 1 ≈ -(r/n) + O(z) then loses ~13 digits to
+    # cancellation.  Instead, write m_Y(z) = alpha/z + (n_pos/n)*m_pos(z) and
+    # compute w = z*m_Y - 1 = (alpha-1) + (n_pos/n)*z*m_pos(z) directly.
+    n_total  = len(eigenvalues)
+    n_pos    = len(eigs_pos)
+    alpha    = (n_total - n_pos) / n_total          # exact mass at 0
+    m_pos    = stieltjes_transform(z_grid, eigs_pos).real
+    m_Y      = alpha / z_grid + (n_pos / n_total) * m_pos
+    w_param  = (alpha - 1.0) + (n_pos / n_total) * z_grid * m_pos  # psi_Y(z)
 
     # Retain only well-posed points: w ∈ (-1, 0), z finite and negative.
     valid = (

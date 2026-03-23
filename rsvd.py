@@ -118,14 +118,20 @@ def rsvd(
     #   • Low-rank A (rank r < l):         n_nz = r, bound = -r/m  (tighter).
     ev_thresh = eigs_nonzero.max() * 1e-8 if eigs_nonzero.max() > 0 else 0.0
     n_nz = int(np.sum(eigs_nonzero > ev_thresh))
-    w_lo = max(-n_nz / m + 1e-3, -1.0 + 1e-3)
+    # Use a 5% relative inset so the margin scales with the domain width.
+    # A fixed +1e-3 offset can equal or exceed the domain width (-n_nz/m) for
+    # very low rank (e.g. rank-1, n=1000 gives domain width 0.001 = margin).
+    w_lo = max(-(n_nz / m) * 0.95, -1.0 + 1e-3)
     w = np.linspace(w_lo, -1e-3, 500)
 
     # S^Y(w) from the empirical spectral measure of (1/l) Y Y^T.
     S_Y = S_transform(eigs_Y, w)
 
-    # Deconvolve Marchenko-Pastur: S^A(w) = S^Y(w) / S^MP(w) = S^Y(w)(1 + c*w)
-    S_A = S_Y.real * (1.0 + c * w)
+    # Deconvolve Marchenko-Pastur: S^MP(w) = 1/(1+cw), so S^A = S^Y / S^MP.
+    # NOTE: S_transform returns S_code = (1+w)/w * z (not the standard S_std =
+    # (1+w)/(w*z)).  In this convention S_code = S_std * z^2, so the standard
+    # identity S_A_std = S_Y_std * (1+cw) becomes S_code_A = S_code_Y / (1+cw).
+    S_A = S_Y.real / (1.0 + c * w)
 
     # Recover corrected eigenvalues of A A^T, then convert to singular values.
     lambda_corr = S_inverse(w, S_A, k)
