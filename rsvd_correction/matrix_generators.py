@@ -9,6 +9,8 @@ import numpy as np
 class MatrixGenerator(Protocol):
     """Callable that produces a random matrix and its true top-k singular values."""
 
+    name: str
+
     def __call__(
         self, n: int, k: int, seed: int | None = None
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -46,6 +48,8 @@ class ExactLowRank:
         Singular values.
     """
 
+    name = "Exact low-rank"
+
     def __init__(self, sigma):
         self.sigma = np.asarray(sigma, dtype=float)
 
@@ -67,6 +71,8 @@ class DiagonalKnownSpectrum:
         Singular values.
     """
 
+    name = "Diagonal known spectrum"
+
     def __init__(self, sigma):
         self.sigma = np.asarray(sigma, dtype=float)
 
@@ -85,6 +91,8 @@ class PolynomialDecay:
     alpha : float
         Decay exponent.  alpha=1 gives sigma_i = 1/i.
     """
+
+    name = "Polynomial decay"
 
     def __init__(self, alpha: float = 1.0):
         self.alpha = alpha
@@ -107,6 +115,8 @@ class ExponentialDecay:
     beta : float
         Decay rate.
     """
+
+    name = "Exponential decay"
 
     def __init__(self, beta: float = 0.5):
         self.beta = beta
@@ -132,6 +142,8 @@ class SignalPlusNoise:
     noise_level : float
         Scales the Gaussian noise matrix.
     """
+
+    name = "Signal plus noise"
 
     def __init__(self, sigma_signal, noise_level: float = 1.0):
         self.sigma_signal = np.asarray(sigma_signal, dtype=float)
