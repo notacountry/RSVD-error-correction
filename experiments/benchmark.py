@@ -3,8 +3,9 @@ Benchmark utilities for RSVD eigenvalue correction.
 """
 import numpy as np
 
+from rsvd_correction.free_probability import correct_singular_values
 from rsvd_correction.matrix_generators import SignalPlusNoise
-from rsvd_correction.rsvd import rsvd
+from rsvd_correction.rsvd import _rsvd_sketch, rsvd
 
 
 def run_benchmark(name, A, sigma_true, k, p, seed=None):
@@ -49,9 +50,9 @@ def rsvd_pair(A, k, p, seed):
     -------
     s_plain, s_corr : ndarray
     """
-    _, s_plain, _ = rsvd(A, k=k, p=p, seed=seed)
-    _, s_corr,  _ = rsvd(A, k=k, p=p, seed=seed, correction=True)
-    return s_plain, s_corr
+    Y, m, n, l, _, Sigma, _ = _rsvd_sketch(np.asarray(A), k, p, seed)
+    s_corr = correct_singular_values(Y, m, n, l, k, Sigma)
+    return Sigma, s_corr
 
 
 def harmonic_signal(k, amplitude=10.0):

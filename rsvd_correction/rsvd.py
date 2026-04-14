@@ -3,6 +3,37 @@ import numpy as np
 from rsvd_correction.free_probability import correct_singular_values
 
 
+def _rsvd_sketch(A, k, p, seed):
+    """
+    Execute the randomized sketch and return all intermediate results.
+
+    Parameters
+    ----------
+    A : (m, n) ndarray  (already validated and converted)
+    k : int
+    p : int
+    seed : int or None
+
+    Returns
+    -------
+    Y : (m, l) ndarray  — sketch matrix A @ Omega
+    m, n, l : int
+    U : (m, k) ndarray
+    Sigma : (k,) ndarray  — plain (uncorrected) singular values
+    Vt : (k, n) ndarray
+    """
+    m, n = A.shape
+    l = k + p
+    rng = np.random.default_rng(seed)
+    Omega = rng.standard_normal(size=(n, l))
+    Y = A @ Omega
+    Q, _ = np.linalg.qr(Y, mode="reduced")
+    B = Q.T @ A
+    U_tilde, Sigma, Vt = np.linalg.svd(B, full_matrices=False)
+    U = Q @ U_tilde
+    return Y, m, n, l, U[:, :k], Sigma[:k], Vt[:k, :]
+
+
 def rsvd(
     A,
     k,
@@ -46,19 +77,7 @@ def rsvd(
     if l > n:
         raise ValueError("k + p cannot exceed n")
 
-    rng = np.random.default_rng(seed)
-
-    Omega = rng.standard_normal(size=(n, l))
-    Y = A @ Omega
-    Q, _ = np.linalg.qr(Y, mode="reduced")
-    B = Q.T @ A
-    U_tilde, Sigma, Vt = np.linalg.svd(B, full_matrices=False)
-    U = Q @ U_tilde
-
-    U     = U[:, :k]
-    Sigma = Sigma[:k]
-    Vt    = Vt[:k, :]
-
+    Y, m, n, l, U, Sigma, Vt = _rsvd_sketch(A, k, p, seed)
     if correction:
         Sigma = correct_singular_values(Y, m, n, l, k, Sigma)
 
