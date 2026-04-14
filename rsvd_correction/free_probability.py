@@ -6,8 +6,6 @@ Assumptions
 1. Eigenvalues are non-negative.
 2. w lies in (-1, 0).
 """
-import warnings
-
 import numpy as np
 from scipy.linalg import eig as scipy_eig
 from scipy.interpolate import CubicSpline
@@ -195,19 +193,18 @@ def _aaa_poles_residues(zj, fj, wj):
 
     Poles are found via the companion-matrix generalized eigenvalue problem
     from Nakatsukasa, Sète & Trefethen (2018).  The denominator of the
-    barycentric form is D(z) = Σ_k w_k/(z - z_k).  Its zeros (the poles of
-    r) are the finite eigenvalues of the (m+1)×(m+1) pencil (E, B):
+    barycentric form is D(z) = Sum_k w_k/(z - z_k).  Its zeros (the poles of
+    r) are the finite eigenvalues of the (m+1)*(m+1) pencil (E, B):
 
         E[0, 1:]  = wj
         E[k, 0]   = 1       for k = 1..m
         E[k, k]   = zj[k-1] for k = 1..m
         B          = diag(0, 1, ..., 1)
 
-    Eliminating the bottom m rows gives Σ_k w_k/(λ - z_k) = 0, which is
-    exactly D(λ) = 0.  This replaces the polyfromroots → polydiv → polyroots
-    chain, which overflows in monomial basis for m ≳ 15 support points.
+    Eliminating the bottom m rows gives Sum_k w_k/(lambda - z_k) = 0, which is
+    exactly D(lambda) = 0.
 
-    Residues are computed via the barycentric formulas for N(z) and D′(z),
+    Residues are computed via the barycentric formulas for N(z) and D'(z),
     which are numerically stable.
 
     Parameters
@@ -226,7 +223,7 @@ def _aaa_poles_residues(zj, fj, wj):
     if wj is None or not np.isfinite(wj).all():
         return np.array([]), np.array([])
 
-    # Build the (m+1) x (m+1) companion pencil (E, B).
+    # Build the (m+1)*(m+1) companion pencil (E, B).
     E = np.zeros((m + 1, m + 1), dtype=complex)
     B = np.zeros((m + 1, m + 1), dtype=complex)
 
@@ -235,9 +232,9 @@ def _aaa_poles_residues(zj, fj, wj):
     E[1:, 1:]  = np.diag(zj)  # support points on diagonal (rows 1..m)
     B[1:, 1:]  = np.eye(m)    # lower-right block is identity; B[0,0] = 0
 
-    # Generalized eigenvalues of E v = λ B v.
+    # Generalized eigenvalues of E v = lambda B v.
     # B is singular (B[0,0]=0), so some eigenvalues are infinite.
-    # The finite ones satisfying D(λ)=0 are the poles of r.
+    # The finite ones satisfying D(lambda)=0 are the poles of r.
     try:
         evals = scipy_eig(E, B, right=False)
     except Exception:
@@ -366,15 +363,7 @@ def S_inverse(w, S_w, k, imag_tol=_IMAG_TOL):
     z, G = psi_inverse(w, S_w)
     finite = np.isfinite(z) & np.isfinite(G)
 
-    eigenvalues = eigenvalues_from_greens_function(z[finite], G[finite], k, imag_tol=imag_tol)
-    if len(eigenvalues) < k:
-        warnings.warn(
-            f"Only {len(eigenvalues)} of {k} requested eigenvalues were recovered.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-
-    return eigenvalues
+    return eigenvalues_from_greens_function(z[finite], G[finite], k, imag_tol=imag_tol)
 
 
 def correct_singular_values(Y, m, n, l, k, Sigma):
@@ -383,9 +372,8 @@ def correct_singular_values(Y, m, n, l, k, Sigma):
     values.
 
     Computes the empirical spectral measure of the sketch Y, deconvolves the
-    Marchenko-Pastur noise contribution via the S-transform, and replaces
-    entries of Sigma with the corrected values wherever the correction reduces
-    the singular value (as the deconvolution should always do).
+    Marchenko-Pastur noise contribution via the S-transform, and returns a
+    corrected copy of Sigma where corrections reduce the singular value.
 
     Parameters
     ----------
@@ -400,27 +388,28 @@ def correct_singular_values(Y, m, n, l, k, Sigma):
     k : int
         Target rank; number of singular values to correct.
     Sigma : (k,) ndarray
-        RSVD singular values, modified in-place where corrections are accepted.
+        RSVD singular values.
 
     Returns
     -------
-    Sigma : (k,) ndarray
-        The (possibly corrected) singular values.
+    Sigma_out : (k,) ndarray
+        Corrected copy of Sigma; entries are replaced only where the correction
+        reduces the singular value.
     """
     c = n / l
 
     # Use the (l x l) matrix Y^T Y instead of (m x m) Y Y^T;
     # they share the same nonzero eigenvalues.
-    eigs_pos = np.linalg.eigvalsh(Y.T @ Y) / l
+    eigs_sketch = np.linalg.eigvalsh(Y.T @ Y) / l
 
     # Pad eigenvalues of Y^T Y with m - l zeros
     # to represent the full m-dimensional ESM.
-    eigs_Y = np.concatenate([eigs_pos, np.zeros(max(0, m - l))])
+    eigs_Y = np.concatenate([eigs_sketch, np.zeros(max(0, m - l))])
 
     # The psi_Y-transform maps the negative real axis onto (bound, 0), so
     # the S-transform is only well-defined for w in that interval.
     # Stay _DOMAIN% inside the boundary to avoid numerical issues at the edges.
-    bound = -np.sum(eigs_pos > 0.0) / m
+    bound = -np.sum(eigs_sketch > 0.0) / m
     w = np.linspace(bound * _DOMAIN, bound * (1 - _DOMAIN), _GRANULARITY)
 
     S_Y = S_transform(eigs_Y, w)
@@ -429,8 +418,9 @@ def correct_singular_values(Y, m, n, l, k, Sigma):
 
     # The deconvolution should always reduce singular values.
     # Reject singular values that were not reduced.
+    Sigma_out = Sigma.copy()
     n_rec = len(sigma_corr)
-    accept = sigma_corr <= Sigma[:n_rec]
-    Sigma[:n_rec][accept] = sigma_corr[accept]
+    accept = sigma_corr <= Sigma_out[:n_rec]
+    Sigma_out[:n_rec][accept] = sigma_corr[accept]
 
-    return Sigma
+    return Sigma_out

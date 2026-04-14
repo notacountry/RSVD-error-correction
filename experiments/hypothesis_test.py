@@ -3,10 +3,10 @@ Paired one-sided t-test: does corrected RSVD reduce per-trial MSE?
 H0: E[D] = 0; H1: E[D] < 0
 """
 import numpy as np
+import pandas as pd
 from scipy import stats
 
-from rsvd_correction.matrix_generators import SignalPlusNoise
-from benchmark import harmonic_signal, rsvd_pair
+from experiments.benchmark import k_from_c, make_spiked_gen, run_trials
 
 
 def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
@@ -22,33 +22,25 @@ def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
         RSVD oversampling parameter.
     alpha : float
         Significance level.
+
+    Returns
+    -------
+    pd.DataFrame with columns: N, K, c, noise, D_bar, s_D, t, p, CI_hi, reject
     """
-    header = (
-        f"{'N':>6} {'K':>5} {'c':>5} {'noise':>6} | "
-        f"{'D_bar':>10} {'s_D':>10} {'t':>8} {'p':>8} | "
-        f"{'CI (-inf, hi)':>20} | {'reject?':>7}"
-    )
-    print(header)
-    print("-" * len(header))
+    rows = []
 
     for N, c_target, noise in configs:
-        K = round(N / c_target) - p
+        K = k_from_c(N, c_target, p)
         if K < 1:
             continue
-        actual_c     = N / (K + p)
-        sigma_signal = harmonic_signal(K)
-        gen = SignalPlusNoise(sigma_signal=sigma_signal, noise_level=noise)
+        actual_c = N / (K + p)
+        gen, sigma_signal = make_spiked_gen(K, noise)
 
-        D = []
-        for seed in range(n_trials):
-            A, _ = gen(n=N, k=K, seed=seed)
-            s_plain, s_corr = rsvd_pair(A, k=K, p=p, seed=seed)
+        D = np.array([
+            np.mean((s_corr - sigma_signal) ** 2) - np.mean((s_plain - sigma_signal) ** 2)
+            for s_plain, s_corr in run_trials(gen, N, K, p, n_trials)
+        ])
 
-            mse_rsvd = np.mean((s_plain - sigma_signal) ** 2)
-            mse_corr = np.mean((s_corr  - sigma_signal) ** 2)
-            D.append(mse_corr - mse_rsvd)
-
-        D = np.array(D)
         n = len(D)
         if n < 2:
             continue
@@ -61,10 +53,17 @@ def run_hypothesis_test(configs, n_trials=100, p=10, alpha=0.05):
         t_crit = stats.t.ppf(1 - alpha, df=n - 1)
         ci_hi  = D_bar + t_crit * s_D / np.sqrt(n)
 
-        reject = "YES" if p_val < alpha else "no"
+        rows.append({
+            "N":      N,
+            "K":      K,
+            "c":      round(actual_c, 2),
+            "noise":  noise,
+            "D_bar":  D_bar,
+            "s_D":    s_D,
+            "t":      t_obs,
+            "p":      p_val,
+            "CI_hi":  ci_hi,
+            "reject": p_val < alpha,
+        })
 
-        print(
-            f"{N:>6} {K:>5} {actual_c:>5.2f} {noise:>6.1f} | "
-            f"{D_bar:>10.4f} {s_D:>10.4f} {t_obs:>8.3f} {p_val:>8.4f} | "
-            f"(-inf, {ci_hi:>8.4f}) | {reject:>7}"
-        )
+    return pd.DataFrame(rows)

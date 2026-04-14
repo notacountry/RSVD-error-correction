@@ -9,9 +9,9 @@ Ratio < 1 means the correction helps relative to plain RSVD.
 from itertools import product
 
 import numpy as np
+import pandas as pd
 
-from rsvd_correction.matrix_generators import SignalPlusNoise
-from benchmark import harmonic_signal, rsvd_pair
+from experiments.benchmark import k_from_c, make_spiked_gen, run_trials
 
 
 P            = 10
@@ -23,46 +23,45 @@ C_TARGETS    = [2, 3, 5, 8, 12]
 
 
 def run_parameter_sweep():
-    header = (
-        f"{'noise':>6} {'N':>6} {'K':>5} {'c':>5} | "
-        f"{'RSVD':>9} {'Corrected':>9} | "
-        f"{'ratio':>7}"
-    )
-    print(header)
-    print("-" * len(header))
+    """
+    Run the parameter sweep over noise levels, matrix sizes, and sketch ratios.
+
+    Returns
+    -------
+    pd.DataFrame with columns: noise, N, K, c, RSVD, Corrected, ratio
+    """
+    rows = []
 
     for noise, N, c in product(NOISE_LEVELS, N_VALS, C_TARGETS):
-        K = round(N / c) - P
+        K = k_from_c(N, c, P)
         if K < 1 or K + P > N:
             continue
 
-        actual_c     = N / (K + P)
-        sigma_signal = harmonic_signal(K)
-        gen = SignalPlusNoise(sigma_signal=sigma_signal, noise_level=noise)
+        actual_c          = N / (K + P)
+        gen, sigma_signal = make_spiked_gen(K, noise)
 
-        rsvd_errs, corr_errs = [], []
-
-        for seed in range(N_SEEDS):
-            A, _ = gen(n=N, k=K, seed=seed)
-            s_plain, s_corr = rsvd_pair(A, k=K, p=P, seed=seed)
-
-            rsvd_errs.append(np.linalg.norm(s_plain - sigma_signal))
-            corr_errs.append(np.linalg.norm(s_corr  - sigma_signal))
-
-        if not rsvd_errs:
+        trials = run_trials(gen, N, K, P, N_SEEDS)
+        if not trials:
             continue
+
+        rsvd_errs = [np.linalg.norm(s_plain - sigma_signal) for s_plain, _ in trials]
+        corr_errs = [np.linalg.norm(s_corr  - sigma_signal) for _, s_corr  in trials]
 
         mean_r    = np.mean(rsvd_errs)
         mean_corr = np.mean(corr_errs)
-        ratio     = mean_corr / mean_r
-        flag      = " <" if ratio < 1.0 else "  "
 
-        print(
-            f"{noise:>6.1f} {N:>6} {K:>5} {actual_c:>5.2f} | "
-            f"{mean_r:>9.4f} {mean_corr:>9.4f} | "
-            f"{ratio:>6.3f}{flag}"
-        )
+        rows.append({
+            "noise":     noise,
+            "N":         N,
+            "K":         K,
+            "c":         round(actual_c, 2),
+            "RSVD":      mean_r,
+            "Corrected": mean_corr,
+            "ratio":     mean_corr / mean_r,
+        })
+
+    return pd.DataFrame(rows)
 
 
 if __name__ == "__main__":
-    run_parameter_sweep()
+    print(run_parameter_sweep().to_string(index=False))

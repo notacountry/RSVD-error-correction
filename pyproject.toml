@@ -9,9 +9,10 @@ description = "Randomized SVD with free-probability-based singular value correct
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
+    "pandas",
     "scipy",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["rsvd_correction*"]
+include = ["rsvd_correction*", "experiments*"]

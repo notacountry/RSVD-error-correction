@@ -62,28 +62,7 @@ class ExactLowRank(MatrixGenerator):
 
     def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
         rng = np.random.default_rng(seed)
-        return _random_svd_matrix(self.sigma, n, rng), np.sort(self.sigma)[::-1]
-
-
-class DiagonalKnownSpectrum(MatrixGenerator):
-    """
-    A = diag(sigma_1, ..., sigma_k, 0, ..., 0).
-
-    Parameters
-    ----------
-    sigma : array_like of shape (k,)
-        Singular values.
-    """
-
-    name = "Diagonal known spectrum"
-
-    def __init__(self, sigma):
-        self.sigma = np.asarray(sigma, dtype=float)
-
-    def __call__(self, n: int, k: int, seed: int | None = None) -> tuple[np.ndarray, np.ndarray]:
-        d = np.zeros(n)
-        d[:k] = np.sort(self.sigma)[::-1]
-        return np.diag(d), d[:k]
+        return _random_svd_matrix(self.sigma, n, rng), np.sort(self.sigma)[::-1][:k]
 
 
 class PolynomialDecay(MatrixGenerator):
@@ -151,4 +130,4 @@ class SignalPlusNoise(MatrixGenerator):
         rng = np.random.default_rng(seed)
         signal = _random_svd_matrix(self.sigma_signal, n, rng)
         noise = (self.noise_level / np.sqrt(n)) * rng.standard_normal((n, n))
-        return signal + noise, np.sort(self.sigma_signal)[::-1]
+        return signal + noise, np.sort(self.sigma_signal)[::-1][:k]
