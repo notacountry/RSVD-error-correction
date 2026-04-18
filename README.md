@@ -1,6 +1,6 @@
-Below is a draft paper copy-pasted from LaTeX.
-
 # Error correction in the randomized singular value decomposition of large matrices
+
+Below is a draft paper copy-pasted from LaTeX.
 
 ## Abstract
 

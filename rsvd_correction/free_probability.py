@@ -366,6 +366,38 @@ def S_inverse(w, S_w, k, imag_tol=_IMAG_TOL):
     return eigenvalues_from_greens_function(z[finite], G[finite], k, imag_tol=imag_tol)
 
 
+def sketch_spectral_info(Y, m, n, l, k):
+    """
+    Expose the intermediate spectral quantities computed during correction.
+
+    Parameters
+    ----------
+    Y : (m, l) ndarray
+        Sketch matrix A @ Omega.
+    m, n, l, k : int
+        Same as in correct_singular_values.
+
+    Returns
+    -------
+    eigs_sketch : (l,) ndarray
+        Non-zero eigenvalues of (1/l) Y Y^T, sorted ascending.
+    eigs_corrected : (<= k,) ndarray
+        Corrected eigenvalues of A A^T from S-transform deconvolution,
+        sorted descending.
+    c : float
+        Aspect ratio n / l.
+    """
+    c = n / l
+    eigs_sketch = np.linalg.eigvalsh(Y.T @ Y) / l
+    eigs_Y = np.concatenate([eigs_sketch, np.zeros(max(0, m - l))])
+    bound = -np.sum(eigs_sketch > 0.0) / m
+    w = np.linspace(bound * _DOMAIN, bound * (1 - _DOMAIN), _GRANULARITY)
+    S_Y = S_transform(eigs_Y, w)
+    S_A = S_Y * (1.0 + c * w)
+    eigs_corrected = S_inverse(w, S_A, k)
+    return eigs_sketch, eigs_corrected, c
+
+
 def correct_singular_values(Y, m, n, l, k, Sigma):
     """
     Apply Marchenko-Pastur S-transform deconvolution to correct RSVD singular
