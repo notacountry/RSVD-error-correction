@@ -448,11 +448,8 @@ def correct_singular_values(Y, m, n, l, k, Sigma):
     S_A = S_Y * (1.0 + c * w)
     sigma_corr = np.sqrt(S_inverse(w, S_A, k))
 
-    # The deconvolution should always reduce singular values.
-    # Reject singular values that were not reduced.
-    Sigma_out = Sigma.copy()
+    Sigma_out = np.zeros_like(Sigma)
     n_rec = len(sigma_corr)
-    accept = sigma_corr <= Sigma_out[:n_rec]
-    Sigma_out[:n_rec][accept] = sigma_corr[accept]
+    Sigma_out[:n_rec] = sigma_corr
 
     return Sigma_out

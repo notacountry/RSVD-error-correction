@@ -4,8 +4,8 @@ Benchmark utilities for RSVD eigenvalue correction.
 import numpy as np
 
 from rsvd_correction.free_probability import correct_singular_values
-from rsvd_correction.matrix_generators import SignalPlusNoise
-from rsvd_correction.rsvd import _rsvd_sketch, rsvd
+from experiments.matrix_generators import SignalPlusNoise
+from rsvd_correction.rsvd import _rsvd_sketch
 
 
 def run_benchmark(name, A, sigma_true, k, p, seed=None):

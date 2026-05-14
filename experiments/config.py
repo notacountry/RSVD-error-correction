@@ -7,9 +7,13 @@ P           = 20
 SIGMA       = harmonic_signal(K)
 SEED        = 42
 
-ALPHA       = 1.0   # PolynomialDecay exponent
-BETA        = 0.5   # ExponentialDecay rate
-NOISE_LEVEL = 1.0   # SignalPlusNoise noise level
+SIGNAL_RANK = 50    # BilevelNoise: number of high-tier signal components
+SIGNAL_HIGH = 5.0   # BilevelNoise: high-tier singular value
+SIGNAL_LOW  = 1.0   # BilevelNoise: low-tier singular value
+
+ALPHA       = 1.0   # PowerLawNoise decay exponent
+BETA        = 0.5   # ExponentialNoise decay rate
+NOISE_LEVEL = 2.0   # noise level for all SignalPlusNoise-style generators
 
 N_TRIALS    = 100
 
