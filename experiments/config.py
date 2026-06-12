@@ -11,9 +11,9 @@ SIGNAL_RANK = 50    # BilevelNoise: number of high-tier signal components
 SIGNAL_HIGH = 5.0   # BilevelNoise: high-tier singular value
 SIGNAL_LOW  = 1.0   # BilevelNoise: low-tier singular value
 
-ALPHA       = 1.0   # PowerLawNoise decay exponent
+ALPHA       = 1.5   # PowerLawNoise decay exponent
 BETA        = 0.5   # ExponentialNoise decay rate
-NOISE_LEVEL = 2.0   # noise level for all SignalPlusNoise-style generators
+NOISE_LEVEL = 0.5   # noise level for all SignalPlusNoise-style generators
 
 N_TRIALS    = 100
 

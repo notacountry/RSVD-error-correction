@@ -42,16 +42,21 @@ def run_benchmark(name, A, sigma_true, k, p, seed=None):
     return {"name": name, "rsvd_rmse": rsvd_rmse, "corr_rmse": corr_rmse}
 
 
-def rsvd_pair(A, k, p, seed):
+def rsvd_pair(A, k, p, seed, bbp=False):
     """
     Run plain and corrected RSVD.
+
+    Parameters
+    ----------
+    bbp : bool
+        If True, also apply BBP inversion for outlier sketch eigenvalues.
 
     Returns
     -------
     s_plain, s_corr : ndarray
     """
     Y, m, n, l, _, Sigma, _ = _rsvd_sketch(np.asarray(A), k, p, seed)
-    s_corr = correct_singular_values(Y, m, n, l, k, Sigma)
+    s_corr = correct_singular_values(Y, m, n, l, k, Sigma, bbp=bbp)
     return Sigma, s_corr
 
 
@@ -86,12 +91,12 @@ def make_spiked_gen(K, noise_level):
 
 
 def _trial_worker(args):
-    gen, N, K, p, seed = args
+    gen, N, K, p, seed, bbp = args
     A, _ = gen(n=N, k=K, seed=seed)
-    return rsvd_pair(A, k=K, p=p, seed=seed)
+    return rsvd_pair(A, k=K, p=p, seed=seed, bbp=bbp)
 
 
-def run_trials(gen, N, K, p, n_seeds, n_jobs=None):
+def run_trials(gen, N, K, p, n_seeds, n_jobs=None, bbp=False):
     """
     Run rsvd_pair for each seed in range(n_seeds).
 
@@ -109,12 +114,14 @@ def run_trials(gen, N, K, p, n_seeds, n_jobs=None):
         Number of independent trials (seeds 0 .. n_seeds-1).
     n_jobs : int or None
         Number of parallel workers. None uses all available CPU cores. 1 runs sequentially.
+    bbp : bool
+        If True, apply BBP inversion in each trial.
 
     Returns
     -------
     list of (s_plain, s_corr) ndarrays, one per seed.
     """
-    args = [(gen, N, K, p, seed) for seed in range(n_seeds)]
+    args = [(gen, N, K, p, seed, bbp) for seed in range(n_seeds)]
     if n_jobs == 1:
         return [_trial_worker(a) for a in args]
     from concurrent.futures import ProcessPoolExecutor

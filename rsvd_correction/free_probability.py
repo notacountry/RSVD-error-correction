@@ -18,8 +18,6 @@ _AAA_TOL           = 1e-13
 _IMAG_TOL          = 1e-6
 _EPSILON           = 1e-10
 _REG_EPS           = 1e-30
-_RESIDUE_THRESHOLD = 0.1
-
 
 def stieltjes_transform(z, eigenvalues):
     """
@@ -308,31 +306,15 @@ def eigenvalues_from_greens_function(z, G, k, tol=_AAA_TOL, imag_tol=_IMAG_TOL):
 
     poles, residues = _aaa_poles_residues(zj, fj, wj)
 
-    # Enforce real positive poles & residues.
-    # Also discard poles at lambda > max|z|: such poles contribute only
-    # residue / (z - lambda) ~ residue / lambda to G on the negative real
-    # axis, which is negligible when lambda >> max|z|.  Any pole found there
-    # is a spurious artefact of the rational approximation and cannot be
-    # resolved from data on [-max|z|, 0).
-    max_z = np.max(np.abs(z))
+    # Enforce physical Stieltjes constraints only: poles must be real and
+    # positive, residues must be real and positive.
     valid = (
         np.isfinite(residues)
         & (np.abs(poles.imag)    < imag_tol * (np.abs(poles.real)    + _REG_EPS))
         & (np.abs(residues.imag) < imag_tol * (np.abs(residues.real) + _REG_EPS))
         & (poles.real    > 0)
-        & (poles.real    < max_z)
         & (residues.real > 0)
     )
-
-    # Second pass: remove poles whose residue is negligibly small relative to
-    # the other valid poles.  A genuine eigenvalue of A contributes residue
-    # ~ 1/N to m_A(z); a spurious AAA pole can have an arbitrarily small
-    # residue that still passes the positivity check.  If any valid pole has a
-    # residue less than 10% of the mean valid residue, it is too small to be a
-    # real eigenvalue and is discarded.
-    if valid.any():
-        mean_res = residues[valid].real.mean()
-        valid &= (residues.real >= _RESIDUE_THRESHOLD * mean_res)
 
     candidates = np.sort(poles[valid].real)[::-1]
     return candidates[:k]
@@ -366,7 +348,63 @@ def S_inverse(w, S_w, k, imag_tol=_IMAG_TOL):
     return eigenvalues_from_greens_function(z[finite], G[finite], k, imag_tol=imag_tol)
 
 
-def sketch_spectral_info(Y, m, n, l, k):
+def _detect_spike_count(Sigma):
+    """
+    Detect the number of spike components via the largest relative gap in
+    the RSVD singular values.
+
+    Parameters
+    ----------
+    Sigma : (k,) ndarray
+        RSVD singular values, sorted descending.
+
+    Returns
+    -------
+    n_spikes : int
+        Number of leading singular values identified as spike components.
+        Returns 0 if no significant gap is found.
+    """
+    Sigma_s = np.sort(np.abs(Sigma))[::-1]
+    if len(Sigma_s) < 2:
+        return 0
+    ratios = Sigma_s[:-1] / (Sigma_s[1:] + _EPSILON)
+    gap_idx = int(np.argmax(ratios))
+    if ratios[gap_idx] < 1.5:
+        return 0
+    return gap_idx + 1
+
+
+def _stransform_deconvolve(eigs_input, m, c, k):
+    """
+    Run S-transform deconvolution on a set of sketch eigenvalues.
+
+    Parameters
+    ----------
+    eigs_input : (p,) ndarray
+        Sketch eigenvalues to use (p <= l; may be a bulk-only subset).
+    m : int
+        Number of rows of the original matrix A (total ESM dimension).
+    c : float
+        Aspect ratio n / l.
+    k : int
+        Number of corrected eigenvalues to return.
+
+    Returns
+    -------
+    eigs_corr : ndarray, length <= k
+        Corrected eigenvalues of A A^T, sorted descending.
+    """
+    n_pos  = int(np.sum(eigs_input > 0))
+    n_pad  = max(0, m - len(eigs_input))
+    eigs_Y = np.concatenate([eigs_input, np.zeros(n_pad)])
+    bound  = -n_pos / m
+    w      = np.linspace(bound * _DOMAIN, bound * (1 - _DOMAIN), _GRANULARITY)
+    S_Y    = S_transform(eigs_Y, w)
+    S_A    = S_Y * (1.0 + c * w)
+    return S_inverse(w, S_A, k)
+
+
+def sketch_spectral_info(Y, m, n, l, k, Sigma=None, bbp=False):
     """
     Expose the intermediate spectral quantities computed during correction.
 
@@ -376,36 +414,68 @@ def sketch_spectral_info(Y, m, n, l, k):
         Sketch matrix A @ Omega.
     m, n, l, k : int
         Same as in correct_singular_values.
+    Sigma : (k,) ndarray or None
+        Plain RSVD singular values.  Required when bbp=True; ignored otherwise.
+    bbp : bool
+        If True, apply spike protection: detect the spectral gap in Sigma and
+        replace the S-transform estimates for the leading spike components
+        with the squared RSVD singular values.  Default False.
 
     Returns
     -------
     eigs_sketch : (l,) ndarray
-        Non-zero eigenvalues of (1/l) Y Y^T, sorted ascending.
+        Eigenvalues of (1/l) Y^T Y, sorted ascending.
     eigs_corrected : (<= k,) ndarray
-        Corrected eigenvalues of A A^T from S-transform deconvolution,
-        sorted descending.
+        Corrected eigenvalues of A A^T, sorted descending.
     c : float
         Aspect ratio n / l.
     """
-    c = n / l
+    c           = n / l
     eigs_sketch = np.linalg.eigvalsh(Y.T @ Y) / l
-    eigs_Y = np.concatenate([eigs_sketch, np.zeros(max(0, m - l))])
-    bound = -np.sum(eigs_sketch > 0.0) / m
-    w = np.linspace(bound * _DOMAIN, bound * (1 - _DOMAIN), _GRANULARITY)
-    S_Y = S_transform(eigs_Y, w)
-    S_A = S_Y * (1.0 + c * w)
-    eigs_corrected = S_inverse(w, S_A, k)
-    return eigs_sketch, eigs_corrected, c
+    eigs_corr   = _stransform_deconvolve(eigs_sketch, m, c, k)
+
+    if bbp:
+        Sigma_in = np.zeros(k) if Sigma is None else Sigma
+        eigs_corr = _apply_bbp(eigs_corr, k, Sigma_in)
+
+    return eigs_sketch, eigs_corr, c
 
 
-def correct_singular_values(Y, m, n, l, k, Sigma):
+def _apply_bbp(eigs_corrected, k, Sigma):
+    """
+    Replace S-transform estimates for spike components with squared RSVD values.
+
+    Detects the spectral gap in the RSVD singular values Sigma and overwrites
+    the leading n_spikes entries of eigs_corrected with Sigma[:n_spikes]**2.
+    The bulk components are returned unchanged.
+
+    Parameters
+    ----------
+    eigs_corrected : ndarray
+        Eigenvalues from S-transform deconvolution, sorted descending.
+    k : int
+        Number of eigenvalues to return.
+    Sigma : (k,) ndarray
+        Plain RSVD singular values (before correction), sorted descending.
+
+    Returns
+    -------
+    eigs_out : ndarray, length <= k
+    """
+    n_spikes = _detect_spike_count(Sigma)
+    if n_spikes == 0 or len(eigs_corrected) == 0:
+        return eigs_corrected
+
+    Sigma_sorted = np.sort(np.abs(Sigma))[::-1]
+    spike_eigs   = Sigma_sorted[:n_spikes] ** 2
+    bulk_out     = np.sort(eigs_corrected)[::-1][n_spikes:]
+    return np.concatenate([spike_eigs, bulk_out])[:k]
+
+
+def correct_singular_values(Y, m, n, l, k, Sigma, bbp=False):
     """
     Apply Marchenko-Pastur S-transform deconvolution to correct RSVD singular
-    values.
-
-    Computes the empirical spectral measure of the sketch Y, deconvolves the
-    Marchenko-Pastur noise contribution via the S-transform, and returns a
-    corrected copy of Sigma where corrections reduce the singular value.
+    values, with optional spike protection for bilevel-type spectra.
 
     Parameters
     ----------
@@ -421,35 +491,26 @@ def correct_singular_values(Y, m, n, l, k, Sigma):
         Target rank; number of singular values to correct.
     Sigma : (k,) ndarray
         RSVD singular values.
+    bbp : bool
+        If True, detect spike components via the spectral gap in Sigma and
+        replace the S-transform estimates for those components with the
+        squared RSVD singular values.  The S-transform deconvolution still
+        runs on the full sketch spectrum; only the output slots corresponding
+        to spike components are overwritten.  Default False.
 
     Returns
     -------
     Sigma_out : (k,) ndarray
-        Corrected copy of Sigma; entries are replaced only where the correction
-        reduces the singular value.
+        Corrected singular values.
     """
-    c = n / l
-
-    # Use the (l x l) matrix Y^T Y instead of (m x m) Y Y^T;
-    # they share the same nonzero eigenvalues.
+    c           = n / l
     eigs_sketch = np.linalg.eigvalsh(Y.T @ Y) / l
+    eigs_corr   = _stransform_deconvolve(eigs_sketch, m, c, k)
 
-    # Pad eigenvalues of Y^T Y with m - l zeros
-    # to represent the full m-dimensional ESM.
-    eigs_Y = np.concatenate([eigs_sketch, np.zeros(max(0, m - l))])
+    if bbp:
+        eigs_corr = _apply_bbp(eigs_corr, k, Sigma)
 
-    # The psi_Y-transform maps the negative real axis onto (bound, 0), so
-    # the S-transform is only well-defined for w in that interval.
-    # Stay _DOMAIN% inside the boundary to avoid numerical issues at the edges.
-    bound = -np.sum(eigs_sketch > 0.0) / m
-    w = np.linspace(bound * _DOMAIN, bound * (1 - _DOMAIN), _GRANULARITY)
-
-    S_Y = S_transform(eigs_Y, w)
-    S_A = S_Y * (1.0 + c * w)
-    sigma_corr = np.sqrt(S_inverse(w, S_A, k))
-
-    Sigma_out = np.zeros_like(Sigma)
-    n_rec = len(sigma_corr)
-    Sigma_out[:n_rec] = sigma_corr
-
+    sigma_corr          = np.sqrt(eigs_corr)
+    Sigma_out           = np.zeros_like(Sigma)
+    Sigma_out[:len(sigma_corr)] = sigma_corr
     return Sigma_out

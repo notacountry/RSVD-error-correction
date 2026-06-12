@@ -40,9 +40,10 @@ def rsvd(
     p=10,
     seed=None,
     correction=False,
+    bbp=False,
 ):
     """
-    RSVD using a Gaussian sketch and optional correction.
+    RSVD using a Gaussian sketch and optional singular value correction.
 
     Parameters
     ----------
@@ -55,7 +56,11 @@ def rsvd(
     seed : int, or None
         Random seed / generator.
     correction : bool, default=False
-        If True, apply the S-transform singular value correction.
+        If True, apply the S-transform bulk deconvolution correction.
+    bbp : bool, default=False
+        If True (requires correction=True), also apply BBP inversion for
+        sketch eigenvalues above the bulk edge.  Has no effect when
+        correction=False.
 
     Returns
     -------
@@ -79,6 +84,6 @@ def rsvd(
 
     Y, m, n, l, U, Sigma, Vt = _rsvd_sketch(A, k, p, seed)
     if correction:
-        Sigma = correct_singular_values(Y, m, n, l, k, Sigma)
+        Sigma = correct_singular_values(Y, m, n, l, k, Sigma, bbp=bbp)
 
     return U, Sigma, Vt
